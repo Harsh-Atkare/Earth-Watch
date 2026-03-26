@@ -707,7 +707,6 @@ export default function Dashboard() {
           <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]" />SUSPECT</div>
           <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.5)]" />LEGAL</div>
           <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]" />VERIFIED</div>
-          <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-[#4a5e72]" />UNKNOWN</div>
         </div>
       </main>
 
