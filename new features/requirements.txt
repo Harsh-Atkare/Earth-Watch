@@ -1,0 +1,6 @@
+streamlit>=1.32.0
+folium>=0.16.0
+streamlit-folium>=0.18.0
+earthengine-api>=0.1.390
+plotly>=5.18.0
+numpy>=1.24.0

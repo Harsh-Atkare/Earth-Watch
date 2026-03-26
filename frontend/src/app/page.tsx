@@ -52,7 +52,7 @@ export default function Home() {
         animate={{ opacity: 1, scale: 1, y: '45vh' }}
         transition={{ duration: 2.5, ease: "easeOut" }}
       >
-        <EarthGlobe />
+        <EarthGlobe rotateSpeed={0} />
       </motion.div>
 
       {/* Elegant Navbar */}
@@ -78,7 +78,7 @@ export default function Home() {
           </button>
         </div>
         <Link 
-          href="/dashboard" 
+          href="/launch" 
           className="px-6 py-2.5 rounded-full bg-white text-slate-900 font-semibold text-xs tracking-wide hover:bg-sky-50 transition-all duration-300"
         >
           Launch Interface
@@ -143,11 +143,11 @@ export default function Home() {
             className="mt-16 flex flex-col sm:flex-row gap-6 items-center pointer-events-auto"
           >
             <Link 
-              href="/dashboard" 
+              href="/launch" 
               className="group relative px-10 py-4 border border-white/20 text-white text-xs font-bold tracking-[0.2em] uppercase hover:bg-white hover:text-black transition-colors duration-300 flex items-center gap-3"
             >
-              <span>Initialize Map</span>
-              <ArrowRight className="w-4 h-4 transition-transform" />
+              <span>Launch Mission Control</span>
+              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
             </Link>
             
             <button 
@@ -283,7 +283,7 @@ export default function Home() {
           Join the planetary defense initiative. Identify illegal extraction operations using real-time spatial intelligence and hold perpetrators accountable.
         </p>
         <Link 
-          href="/dashboard" 
+          href="/launch" 
           className="group relative px-12 py-5 border border-white/20 text-white text-xs font-bold tracking-[0.2em] uppercase hover:bg-white hover:text-black transition-colors duration-300 flex items-center gap-3"
         >
           <span>Launch Platform</span>
