@@ -8,7 +8,7 @@ import { useState } from "react";
 import SolarSystemMap from "@/components/SolarSystemMap";
 
 // Dynamically import globe to avoid SSR issues
-const EarthGlobe = dynamic(() => import("@/components/EarthGlobe"), { ssr: false });
+const EarthGlobeHome = dynamic(() => import("@/components/EarthGlobeHome"), { ssr: false });
 
 export default function Home() {
   const { scrollYProgress } = useScroll();
@@ -52,7 +52,7 @@ export default function Home() {
         animate={{ opacity: 1, scale: 1, y: '45vh' }}
         transition={{ duration: 2.5, ease: "easeOut" }}
       >
-        <EarthGlobe rotateSpeed={0} />
+        <EarthGlobeHome />
       </motion.div>
 
       {/* Elegant Navbar */}
