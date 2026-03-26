@@ -112,7 +112,12 @@ export default function TerrainGuardian() {
   const [firePostEnd, setFirePostEnd] = useState("2023-09-01");
   const [fireResult, setFireResult] = useState<any>(null);
   
+  // Snow State
+  const [snowYear, setSnowYear] = useState(2024);
+  const [snowIncludeTrend, setSnowIncludeTrend] = useState(true);
   const [snowResult, setSnowResult] = useState<any>(null);
+  
+  // Landslide State
   const [landslideResult, setLandslideResult] = useState<any>(null);
 
   // ── Draw handlers ──────────────────────────────────────────
@@ -155,6 +160,8 @@ export default function TerrainGuardian() {
     setOverlayName("");
     setLulcResult(null);
     setFireResult(null);
+    setSnowResult(null);
+    setLandslideResult(null);
     setLoading(false);
   };
 
@@ -208,6 +215,52 @@ export default function TerrainGuardian() {
       }
     } catch (err: any) {
       alert(`Fire analysis failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setLoading(false);
+  };
+
+  // ── Snow Cover Analysis ────────────────────────────────────
+  const runSnow = async () => {
+    const geom = getGeometry();
+    if (!geom) return;
+    setLoading(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/snow`, {
+        geojson: geom,
+        year: snowYear,
+        include_trend: snowIncludeTrend,
+        trend_start_year: 2014,
+        trend_end_year: 2025,
+      });
+      setSnowResult(res.data);
+      if (res.data.snow_tiles) {
+        setOverlayTiles(res.data.snow_tiles);
+        setOverlayName("Snow Cover Extent");
+      }
+    } catch (err: any) {
+      alert(`Snow analysis failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setLoading(false);
+  };
+
+  // ── Landslide Analysis ─────────────────────────────────────
+  const runLandslide = async () => {
+    const geom = getGeometry();
+    if (!geom) return;
+    setLoading(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/landslide`, {
+        geojson: geom,
+      });
+      setLandslideResult(res.data);
+      if (res.data.class_tiles) {
+        setOverlayTiles(res.data.class_tiles);
+        setOverlayName("Landslide Risk Classes");
+      }
+    } catch (err: any) {
+      alert(`Landslide analysis failed: ${err?.response?.data?.detail || err.message}`);
     }
     setLoading(false);
   };
@@ -562,8 +615,206 @@ export default function TerrainGuardian() {
             </motion.div>
           )}
 
+          {/* SNOW TAB */}
+          {activeTab === "snow" && (
+            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col gap-5">
+              <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 flex flex-col gap-4">
+                <h3 className="text-[11px] font-mono font-bold tracking-widest text-slate-400 uppercase">Analysis Parameters</h3>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Analysis Year</label>
+                    <input type="number" min="2014" max="2025" value={snowYear} onChange={(e) => setSnowYear(parseInt(e.target.value))}
+                      className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white outline-none focus:border-cyan-500/50" />
+                  </div>
+                  <div className="space-y-2 flex flex-col justify-end">
+                    <label className="flex items-center gap-2 cursor-pointer pb-2 hover:opacity-80 transition-opacity">
+                      <input type="checkbox" checked={snowIncludeTrend} onChange={(e) => setSnowIncludeTrend(e.target.checked)} className="accent-cyan-500 w-3.5 h-3.5" />
+                      <span className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">Include 10yr Trend</span>
+                    </label>
+                  </div>
+                </div>
+
+                <button
+                  onClick={runSnow}
+                  disabled={!selectedPolygon || loading}
+                  className="w-full mt-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium py-3 rounded-xl shadow-lg shadow-cyan-900/20 disabled:opacity-50 flex justify-center items-center gap-2 transition-all"
+                >
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Snowflake className="w-4 h-4" />}
+                  {loading ? "Analyzing Geometry..." : "Run Snow Cover Analysis"}
+                </button>
+              </div>
+
+              <AnimatePresence>
+                {snowResult && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="flex flex-col gap-4 overflow-visible">
+                    
+                    {/* Layer controls */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5">
+                      <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Data Layers</h3>
+                      <div className="flex flex-col gap-2">
+                        {[
+                          { id: snowResult.snow_tiles, name: "Snow Cover Extent", color: "border-cyan-500", text: "text-cyan-400" },
+                          { id: snowResult.ndsi_tiles, name: "NDSI Heatmap", color: "border-indigo-500", text: "text-indigo-400" },
+                          { id: snowResult.rgb_tiles, name: "True Color (Landsat)", color: "border-slate-500", text: "text-slate-400" },
+                        ].map((layer, i) => (
+                          <button key={i} onClick={() => switchLayer(layer.id, layer.name)}
+                            className={`flex items-center gap-3 p-3 rounded-lg border text-xs transition-all ${
+                              overlayTiles === layer.id
+                                ? `bg-white/10 ${layer.color} ${layer.text} shadow-[0_0_15px_rgba(255,255,255,0.05)]`
+                                : 'bg-black/20 border-white/5 text-slate-400 hover:bg-white/5'
+                            }`}
+                          >
+                            <Layers className="w-4 h-4" />
+                            <span className="flex-1 text-left font-medium">{layer.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Stats */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 mt-2">
+                      <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Snow Statistics ({snowResult.stats?.year})</h3>
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                         <div className="bg-black/20 border border-cyan-500/20 rounded-lg p-3">
+                           <div className="text-[10px] uppercase tracking-wider text-cyan-500/70 mb-1">Snow Cover</div>
+                           <div className="text-lg font-mono font-bold text-cyan-400">{snowResult.stats?.snow_coverage_pct}%</div>
+                         </div>
+                         <div className="bg-black/20 border border-white/5 rounded-lg p-3">
+                           <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Snow Area</div>
+                           <div className="text-lg font-mono text-slate-300">{snowResult.stats?.snow_area_km2} <span className="text-xs text-slate-500">km²</span></div>
+                         </div>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] px-2">
+                         <span className="text-slate-500">Mean NDSI:</span>
+                         <span className="font-mono text-slate-300">{snowResult.stats?.ndsi_mean} ± {snowResult.stats?.ndsi_std}</span>
+                      </div>
+                    </div>
+
+                    {/* Trend Chart */}
+                    {snowResult.trend && snowResult.trend.length > 0 && (
+                      <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 mt-2">
+                        <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">10-Year Snow Trend</h3>
+                        <div className="flex items-end justify-between h-28 gap-1 pt-4">
+                          {snowResult.trend.map((t: any) => {
+                            const maxArea = Math.max(...snowResult.trend.map((d: any) => d.area_km2));
+                            const heightPct = maxArea > 0 ? (t.area_km2 / maxArea) * 100 : 0;
+                            return (
+                              <div key={t.year} className="flex flex-col items-center gap-1 group flex-1">
+                                <span className="text-[9px] text-white/0 group-hover:text-cyan-300 font-mono transition-colors absolute -mt-5">{t.area_km2}</span>
+                                <div className="w-full max-w-[12px] bg-cyan-500/30 rounded-t-sm group-hover:bg-cyan-400 transition-colors relative" style={{ height: `${Math.max(4, heightPct)}%` }} />
+                                <span className="text-[8px] text-slate-500 font-mono -rotate-45 origin-top-left mt-3">{t.year}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+
+          {/* LANDSLIDE TAB */}
+          {activeTab === "landslide" && (
+            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col gap-5">
+              <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 flex flex-col gap-4">
+                <h3 className="text-[11px] font-mono font-bold tracking-widest text-slate-400 uppercase">Analysis Parameters</h3>
+                
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Calculates landslide susceptibility using a Random Forest model trained on variables including elevation, slope, aspect, and proximity to drainage.
+                </p>
+
+                <button
+                  onClick={runLandslide}
+                  disabled={!selectedPolygon || loading}
+                  className="w-full mt-2 bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white font-medium py-3 rounded-xl shadow-lg shadow-rose-900/20 disabled:opacity-50 flex justify-center items-center gap-2 transition-all"
+                >
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mountain className="w-4 h-4" />}
+                  {loading ? "Analyzing Terrain..." : "Run Susceptibility Analysis"}
+                </button>
+              </div>
+
+              <AnimatePresence>
+                {landslideResult && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="flex flex-col gap-4 overflow-visible">
+                    
+                    {/* Layer controls */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5">
+                      <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Data Layers</h3>
+                      <div className="flex flex-col gap-2">
+                        {[
+                          { id: landslideResult.class_tiles, name: "Risk Classification", color: "border-rose-500", text: "text-rose-400" },
+                          { id: landslideResult.probability_tiles, name: "Continuous Probability", color: "border-orange-500", text: "text-orange-400" },
+                          { id: landslideResult.slope_tiles, name: "Terrain Slope (Degrees)", color: "border-slate-500", text: "text-slate-400" },
+                          { id: landslideResult.elevation_tiles, name: "Elevation (NASADEM)", color: "border-emerald-500", text: "text-emerald-400" },
+                          { id: landslideResult.hand_tiles, name: "Height Above Nearest Drainage", color: "border-blue-500", text: "text-blue-400" },
+                        ].map((layer, i) => (
+                          <button key={i} onClick={() => switchLayer(layer.id, layer.name)}
+                            className={`flex items-center gap-3 p-3 rounded-lg border text-xs transition-all ${
+                              overlayTiles === layer.id
+                                ? `bg-white/10 ${layer.color} ${layer.text} shadow-[0_0_15px_rgba(255,255,255,0.05)]`
+                                : 'bg-black/20 border-white/5 text-slate-400 hover:bg-white/5'
+                            }`}
+                          >
+                            <Layers className="w-4 h-4" />
+                            <span className="flex-1 text-left font-medium">{layer.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Stats */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 mt-2">
+                      <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Risk Breakdown</h3>
+                      
+                      <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10 mb-4">
+                        <span className="text-xs font-semibold text-slate-300">Total Analyzed Area</span>
+                        <span className="font-mono text-sm font-bold text-white">{landslideResult.stats?.total_km2} <span className="text-xs text-slate-500">km²</span></span>
+                      </div>
+
+                      <div className="space-y-3">
+                        {[
+                          { label: 'Very High Risk', key: 'very_high_risk_km2', color: '#ff3d5a' },
+                          { label: 'High Risk', key: 'high_risk_km2', color: '#f5a623' },
+                          { label: 'Moderate Risk', key: 'moderate_risk_km2', color: '#f5d623' },
+                          { label: 'Low Risk', key: 'low_risk_km2', color: '#00c48c' },
+                        ].map(risk => {
+                          const area = landslideResult.stats?.[risk.key] || 0;
+                          const pct = landslideResult.stats?.total_km2 ? (area / landslideResult.stats.total_km2) * 100 : 0;
+                          return (
+                            <div key={risk.key} className="flex flex-col gap-1.5">
+                              <div className="flex justify-between text-xs">
+                                <span className="text-slate-300 flex items-center gap-2">
+                                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: risk.color }}></div>
+                                  {risk.label}
+                                </span>
+                                <span className="font-mono text-slate-400">{area} km² ({pct.toFixed(1)}%)</span>
+                              </div>
+                              <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                                <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: risk.color }}></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      
+                      <div className="mt-5 pt-4 border-t border-white/10 flex justify-between items-center text-[11px] text-slate-500">
+                         <span>Model Accuracy (RF):</span>
+                         <span className="font-mono text-emerald-400">{landslideResult.stats?.accuracy}%</span>
+                      </div>
+                    </div>
+
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+
           {/* OTHER TABS — Placeholder */}
-          {!["lulc", "fire"].includes(activeTab) && (
+          {!["lulc", "fire", "snow", "landslide"].includes(activeTab) && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
               className="flex flex-col items-center justify-center gap-3 py-12 text-center"
             >

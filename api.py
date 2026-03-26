@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import API_HOST, API_PORT
-from backend.routers import detect, verify, lulc, fire
+from backend.routers import detect, verify, lulc, fire, snow, landslide
 from backend.utils.db import ensure_verified_table
 
 # ── Logging ───────────────────────────────────────────────────────
@@ -45,6 +45,8 @@ app.include_router(detect.router)
 app.include_router(verify.router)
 app.include_router(lulc.router)
 app.include_router(fire.router)
+app.include_router(snow.router)
+app.include_router(landslide.router)
 
 # ── Health ────────────────────────────────────────────────────────
 @app.get("/")
