@@ -53,24 +53,88 @@ source .venv/bin/activate        # macOS/Linux
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment
+### 4. Configure environment variables
+
 ```bash
 cp .env.example .env
-# Edit .env and fill in your Supabase password, GEE project, etc.
 ```
 
-### 5. Authenticate Google Earth Engine (first time only)
+Now open `.env` and fill in the following keys:
+
+| Variable | Description |
+|----------|-------------|
+| `PGDATABASE` | Your Supabase database name |
+| `PGUSER` | Supabase pooler username |
+| `PGPASSWORD` | Supabase database password |
+| `PGHOST` | Supabase pooler host |
+| `PGPORT` | Supabase pooler port (default: `6543`) |
+| `DB_DIRECT_USER` | Supabase direct connection user |
+| `DB_DIRECT_PASSWORD` | Supabase direct connection password |
+| `DB_DIRECT_HOST` | Supabase direct connection host |
+| `DB_DIRECT_PORT` | Supabase direct connection port (default: `5432`) |
+| `GEE_PROJECT` | Your Google Earth Engine project ID (see below) |
+| `MODEL_PATH` | Path to your `.pt` model weights file |
+
+---
+
+### 5. Get a Google Earth Engine Project ID (Non-Commercial Access)
+
+Google Earth Engine is free for non-commercial and research use. Follow these steps to register and get your project ID:
+
+**Step 1 — Sign up for GEE access**
+1. Go to [https://earthengine.google.com](https://earthengine.google.com) and click **Sign Up**.
+2. Sign in with a Google account.
+3. Fill in the registration form. Under **Use Case**, select **Research / Non-Commercial**.
+4. Submit and wait for approval — this usually takes a few minutes to a few hours.
+
+**Step 2 — Create a Cloud Project for GEE**
+1. Go to the [Google Cloud Console](https://console.cloud.google.com).
+2. Click **Select a project** → **New Project**.
+3. Give your project a name (e.g., `earth-watch-gee`) and click **Create**.
+4. Once created, note the **Project ID** shown under the project name (e.g., `earth-watch-gee-123456`). This is your `GEE_PROJECT` value.
+5. In the Cloud Console, go to **APIs & Services → Library**, search for **Earth Engine API**, and click **Enable**.
+
+**Step 3 — Register your project with Earth Engine**
+1. Go to [https://code.earthengine.google.com](https://code.earthengine.google.com).
+2. In the top-right, click your avatar → **Register a new cloud project**.
+3. Select the Cloud project you just created and register it for **Non-Commercial / Research** use.
+
+**Step 4 — Add your Project ID to `.env`**
+```
+GEE_PROJECT=your-project-id-here
+```
+
+---
+
+### 6. Authenticate Google Earth Engine
+
+Run this once to authorize your machine:
+
 ```bash
 earthengine authenticate
 ```
 
-### 6. Set up the legal mines database (first time only)
+This will open a browser window asking you to log in with the Google account linked to your GEE project. After approving, a credentials token is saved locally and used automatically by the app.
+
+> **Note:** If you're running on a remote server (no browser), use:
+> ```bash
+> earthengine authenticate --quiet
+> ```
+> and follow the link printed in the terminal.
+
+---
+
+### 7. Set up the legal mines database
+
+Run this once to load the Maus et al. 2022 global mining polygons into your Supabase PostGIS table:
+
 ```bash
 python setup_legal_mines.py
 ```
-This loads the Maus et al. 2022 global mining polygons into your Supabase PostGIS table.
 
-### 7. Place your trained model
+This will create the `legal_mines` table, insert all mining polygons, and build a spatial index for fast detection queries.
+
+### 8. Place your trained model
 ```
 clean_data_model/best_model.pt
 ```
