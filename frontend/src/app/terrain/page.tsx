@@ -6,7 +6,7 @@ import Map, { Source, Layer, NavigationControl, MapRef } from "react-map-gl/mapl
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   ArrowLeft, Loader2, MapIcon, Layers, ChevronDown, Square, Hexagon, Trash2,
-  TreePine, Flame, Snowflake, Mountain, Globe2
+  TreePine, Flame, Snowflake, Mountain, Globe2, Trees
 } from "lucide-react";
 import Link from "next/link";
 import axios from "axios";
@@ -102,7 +102,10 @@ export default function TerrainGuardian() {
   const [lulcSeason, setLulcSeason] = useState("annual");
   const [lulcResult, setLulcResult] = useState<any>(null);
 
-  // Future tabs state placeholders
+  // Deforestation State
+  const [defStartYear, setDefStartYear] = useState(2001);
+  const [defEndYear, setDefEndYear] = useState(2023);
+  const [defMinCanopy, setDefMinCanopy] = useState(20);
   const [deforestResult, setDeforestResult] = useState<any>(null);
   
   // Fire State
@@ -162,6 +165,7 @@ export default function TerrainGuardian() {
     setFireResult(null);
     setSnowResult(null);
     setLandslideResult(null);
+    setDeforestResult(null);
     setLoading(false);
   };
 
@@ -261,6 +265,30 @@ export default function TerrainGuardian() {
       }
     } catch (err: any) {
       alert(`Landslide analysis failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setLoading(false);
+  };
+
+  // ── Deforestation Analysis ──────────────────────────────────
+  const runDeforestation = async () => {
+    const geom = getGeometry();
+    if (!geom) return;
+    setLoading(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/deforestation`, {
+        geojson: geom,
+        start_year: defStartYear,
+        end_year: defEndYear,
+        min_canopy: defMinCanopy,
+      });
+      setDeforestResult(res.data);
+      if (res.data.combined_tiles) {
+        setOverlayTiles(res.data.combined_tiles);
+        setOverlayName("Forest Loss Map");
+      }
+    } catch (err: any) {
+      alert(`Deforestation analysis failed: ${err?.response?.data?.detail || err.message}`);
     }
     setLoading(false);
   };
@@ -813,8 +841,110 @@ export default function TerrainGuardian() {
             </motion.div>
           )}
 
+          {/* DEFORESTATION TAB */}
+          {activeTab === "deforestation" && (
+            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col gap-5">
+              <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 flex flex-col gap-4">
+                <h3 className="text-[11px] font-mono font-bold tracking-widest text-slate-400 uppercase">Analysis Parameters</h3>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Start Year (2001+)</label>
+                    <input type="number" min="2001" max="2023" value={defStartYear} onChange={(e) => setDefStartYear(parseInt(e.target.value))}
+                      className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-green-500/50" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">End Year (≤2023)</label>
+                    <input type="number" min="2001" max="2023" value={defEndYear} onChange={(e) => setDefEndYear(parseInt(e.target.value))}
+                      className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-green-500/50" />
+                  </div>
+                </div>
+
+                <div className="space-y-2 mt-1">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Min Canopy Density (%)</label>
+                    <span className="text-xs font-mono text-green-400">{defMinCanopy}%</span>
+                  </div>
+                  <input type="range" min="0" max="100" step="5" value={defMinCanopy} onChange={(e) => setDefMinCanopy(parseInt(e.target.value))}
+                    className="w-full accent-green-500" />
+                </div>
+
+                <button
+                  onClick={runDeforestation}
+                  disabled={!selectedPolygon || loading}
+                  className="w-full mt-2 bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-500 hover:to-emerald-600 text-white font-medium py-3 rounded-xl shadow-lg shadow-green-900/20 disabled:opacity-50 flex justify-center items-center gap-2 transition-all"
+                >
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trees className="w-4 h-4" />}
+                  {loading ? "Analyzing Geometry..." : "Run Deforestation Analysis"}
+                </button>
+              </div>
+
+              <AnimatePresence>
+                {deforestResult && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="flex flex-col gap-4 overflow-visible">
+                    
+                    {/* Layer controls */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5">
+                      <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Data Layers</h3>
+                      <div className="flex flex-col gap-2">
+                        {[
+                          { id: deforestResult.combined_tiles, name: "Forest Loss Map (Combined)", color: "border-green-500", text: "text-green-400" },
+                          { id: deforestResult.forest_loss_tiles, name: "Loss Extent Only", color: "border-red-500", text: "text-red-400" },
+                          { id: deforestResult.base_forest_tiles, name: "Base Forest Extent (2000)", color: "border-emerald-700", text: "text-emerald-500" },
+                        ].map((layer, i) => (
+                          <button key={i} onClick={() => switchLayer(layer.id, layer.name)}
+                            disabled={!layer.id}
+                            className={`flex items-center gap-3 p-3 rounded-lg border text-xs transition-all ${!layer.id ? 'opacity-50 cursor-not-allowed' : ''} ${
+                              overlayTiles === layer.id
+                                ? `bg-white/10 ${layer.color} ${layer.text} shadow-[0_0_15px_rgba(255,255,255,0.05)]`
+                                : 'bg-black/20 border-white/5 text-slate-400 hover:bg-white/5'
+                            }`}
+                          >
+                            <Layers className="w-4 h-4" />
+                            <span className="flex-1 text-left font-medium">{layer.name} {!layer.id && "(No coverage)"}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Stats */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 mt-2">
+                      <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Deforestation Statistics</h3>
+                      
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                           <div className="text-[10px] uppercase tracking-wider text-red-500/70 mb-1">Loss Area</div>
+                           <div className="text-lg font-mono font-bold text-red-400 text-center">{deforestResult.stats?.loss_area_ha} <span className="text-[10px] text-red-500/50">ha</span></div>
+                         </div>
+                         <div className="bg-black/20 border border-white/5 rounded-lg p-3">
+                           <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Base Forest</div>
+                           <div className="text-lg font-mono text-slate-300 text-center">{deforestResult.stats?.base_forest_area_ha} <span className="text-[10px] text-slate-500">ha</span></div>
+                         </div>
+                      </div>
+
+                      <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-white/5">
+                        <span className="text-xs text-slate-400">Total Loss Proportion</span>
+                        <div className="flex items-center gap-3">
+                          <div className="w-24 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                            <div className="h-full bg-red-500 rounded-full" style={{ width: `${Math.min(100, deforestResult.stats?.loss_percentage)}%` }} />
+                          </div>
+                          <span className="font-mono text-xs font-bold text-red-400">{deforestResult.stats?.loss_percentage}%</span>
+                        </div>
+                      </div>
+                      
+                      <div className="mx-2 mt-4 text-[10px] text-slate-500 text-center">
+                        Source: {deforestResult.stats?.source}
+                      </div>
+                    </div>
+
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+
           {/* OTHER TABS — Placeholder */}
-          {!["lulc", "fire", "snow", "landslide"].includes(activeTab) && (
+          {!["lulc", "fire", "snow", "landslide", "deforestation"].includes(activeTab) && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
               className="flex flex-col items-center justify-center gap-3 py-12 text-center"
             >
