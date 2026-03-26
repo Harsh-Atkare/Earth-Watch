@@ -5,14 +5,14 @@ import * as THREE from "three";
 
 // ── Planet config ────────────────────────────────────────────
 const PLANET_DATA = [
-  { name: "Mercury", color: 0xb0b0b0, emissive: 0x444444, radius: 0.6,  orbit: 6,   speed: 2.4,  startAngle: 0.8  },
-  { name: "Venus",   color: 0xeedd88, emissive: 0x665522, radius: 1.0,  orbit: 9,   speed: 1.8,  startAngle: 2.1  },
-  { name: "Earth",   color: 0x4da6ff, emissive: 0x1a4477, radius: 1.1,  orbit: 13,  speed: 1.4,  startAngle: 3.5  },
-  { name: "Mars",    color: 0xff6644, emissive: 0x661a00, radius: 0.85, orbit: 17,  speed: 1.1,  startAngle: 5.0  },
-  { name: "Jupiter", color: 0xe8c8a0, emissive: 0x554433, radius: 2.8,  orbit: 24,  speed: 0.6,  startAngle: 1.2  },
-  { name: "Saturn",  color: 0xeedd99, emissive: 0x665533, radius: 2.3,  orbit: 32,  speed: 0.45, startAngle: 4.0  },
-  { name: "Uranus",  color: 0xaaddff, emissive: 0x335577, radius: 1.6,  orbit: 40,  speed: 0.3,  startAngle: 2.8  },
-  { name: "Neptune", color: 0x5588ff, emissive: 0x223377, radius: 1.5,  orbit: 47,  speed: 0.22, startAngle: 0.5  },
+  { name: "Mercury", textureUrl: "/textures/planets/2k_mercury.jpg",        emissive: 0x222222, radius: 0.6,  orbit: 6,   speed: 2.4,  startAngle: 0.8  },
+  { name: "Venus",   textureUrl: "/textures/planets/2k_venus_surface.jpg",  emissive: 0x222222, radius: 1.0,  orbit: 9,   speed: 1.8,  startAngle: 2.1  },
+  { name: "Earth",   textureUrl: "/textures/planets/2k_earth_daymap.jpg",   emissive: 0x222222, radius: 1.1,  orbit: 13,  speed: 1.4,  startAngle: 3.5  },
+  { name: "Mars",    textureUrl: "/textures/planets/2k_mars.jpg",           emissive: 0x222222, radius: 0.85, orbit: 17,  speed: 1.1,  startAngle: 5.0  },
+  { name: "Jupiter", textureUrl: "/textures/planets/2k_jupiter.jpg",        emissive: 0x111111, radius: 2.8,  orbit: 24,  speed: 0.6,  startAngle: 1.2  },
+  { name: "Saturn",  textureUrl: "/textures/planets/2k_saturn.jpg",         emissive: 0x111111, radius: 2.3,  orbit: 32,  speed: 0.45, startAngle: 4.0  },
+  { name: "Uranus",  textureUrl: "/textures/planets/2k_uranus.jpg",         emissive: 0x111111, radius: 1.6,  orbit: 40,  speed: 0.3,  startAngle: 2.8  },
+  { name: "Neptune", textureUrl: "/textures/planets/2k_neptune.jpg",        emissive: 0x111111, radius: 1.5,  orbit: 47,  speed: 0.22, startAngle: 0.5  },
 ];
 
 type SolarSystemProps = {
@@ -99,9 +99,13 @@ export default function SolarSystem3D({ phase, onZoomComplete }: SolarSystemProp
     const starMat = new THREE.PointsMaterial({ size: 0.15, vertexColors: true, transparent: true, opacity: 0.8 });
     scene.add(new THREE.Points(starGeom, starMat));
 
+    const textureLoader = new THREE.TextureLoader();
+
     // ── SUN (emissive sphere + glow sprite) ──────────────
     const sunGeom = new THREE.SphereGeometry(2.5, 64, 64);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+    const sunTexture = textureLoader.load("/textures/planets/2k_sun.jpg");
+    sunTexture.colorSpace = THREE.SRGBColorSpace;
+    const sunMat = new THREE.MeshBasicMaterial({ map: sunTexture });
     const sun = new THREE.Mesh(sunGeom, sunMat);
     scene.add(sun);
 
@@ -141,25 +145,45 @@ export default function SolarSystem3D({ phase, onZoomComplete }: SolarSystemProp
       scene.add(orbitLine);
 
       // Planet sphere — emissive material so dark side is still visible
-      const planetGeom = new THREE.SphereGeometry(p.radius, 32, 32);
+      const planetGeom = new THREE.SphereGeometry(p.radius, 64, 64);
+      const texture = textureLoader.load(p.textureUrl);
+      texture.colorSpace = THREE.SRGBColorSpace;
       const planetMat = new THREE.MeshStandardMaterial({
-        color: p.color,
+        map: texture,
         emissive: new THREE.Color(p.emissive),
-        emissiveIntensity: 0.6,
-        roughness: 0.7,
+        emissiveIntensity: 0.2,
+        roughness: 0.8,
         metalness: 0.1,
       });
       const planetMesh = new THREE.Mesh(planetGeom, planetMat);
+      
+      // Tilt planets slightly for realism
+      planetMesh.rotation.x = Math.PI * 0.1;
       scene.add(planetMesh);
 
       // Saturn rings
       if (p.name === "Saturn") {
-        const ringGeom = new THREE.RingGeometry(p.radius * 1.4, p.radius * 2.2, 64);
-        const ringMat = new THREE.MeshBasicMaterial({
-          color: 0xddb892,
+        const ringGeom = new THREE.RingGeometry(p.radius * 1.4, p.radius * 2.4, 64, 1);
+        
+        // Correct radial UV mapping for standard ring texture line
+        const pos = ringGeom.attributes.position;
+        const v3 = new THREE.Vector3();
+        for (let i = 0; i < pos.count; i++) {
+          v3.fromBufferAttribute(pos, i);
+          const r = v3.length();
+          const normalizedRadius = (r - p.radius * 1.4) / (p.radius * 2.4 - p.radius * 1.4);
+          ringGeom.attributes.uv.setXY(i, normalizedRadius, 1);
+        }
+
+        const ringTexture = textureLoader.load("/textures/planets/2k_saturn_ring_alpha.png");
+        ringTexture.colorSpace = THREE.SRGBColorSpace;
+        const ringMat = new THREE.MeshStandardMaterial({
+          map: ringTexture,
+          alphaMap: ringTexture,
           transparent: true,
-          opacity: 0.4,
           side: THREE.DoubleSide,
+          opacity: 0.9,
+          roughness: 0.6,
         });
         const ring = new THREE.Mesh(ringGeom, ringMat);
         ring.rotation.x = -Math.PI * 0.4;
