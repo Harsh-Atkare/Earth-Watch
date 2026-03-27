@@ -7,7 +7,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Globe2, TreePine, Flame,
-  Snowflake, Mountain, Pickaxe, ChevronRight, Satellite, X
+  Snowflake, Mountain, Pickaxe, ChevronRight, Satellite, X, Building2
 } from "lucide-react";
 
 const EarthGlobe = dynamic(() => import("@/components/EarthGlobe"), { ssr: false });
@@ -53,6 +53,12 @@ const FEATURES = [
     description: "9-variable terrain analysis with Random Forest classifier.",
     icon: Mountain, color: "#ef4444", gradient: "from-red-500/20 to-red-600/5", borderColor: "border-red-500/30",
     href: "/terrain?tab=landslide", tags: ["RF Model", "NASADEM"],
+  },
+  {
+    id: "building", title: "Building Detection", subtitle: "ResU-Net · Open Buildings",
+    description: "Detect urban infrastructure using Custom Deep Learning and GEE.",
+    icon: Building2, color: "#a855f7", gradient: "from-purple-500/20 to-purple-600/5", borderColor: "border-purple-500/30",
+    href: "/terrain?tab=building", tags: ["U-Net", "GEE V3"],
   },
 ];
 

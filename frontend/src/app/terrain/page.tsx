@@ -6,7 +6,7 @@ import Map, { Source, Layer, NavigationControl, MapRef } from "react-map-gl/mapl
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   ArrowLeft, Loader2, MapIcon, Layers, ChevronDown, Square, Hexagon, Trash2,
-  TreePine, Flame, Snowflake, Mountain, Globe2, Trees
+  TreePine, Flame, Snowflake, Mountain, Globe2, Trees, Building2
 } from "lucide-react";
 import Link from "next/link";
 import axios from "axios";
@@ -45,7 +45,11 @@ function DrawControl(props: ConstructorParameters<typeof MapboxDraw>[0] & {
     ({ map }: { map: any }) => { map.off("draw.create", props.onCreate); map.off("draw.update", props.onUpdate); map.off("draw.delete", props.onDelete); },
     { position: props.position || "top-left" }
   );
-  useEffect(() => { if (draw && props.onInit) props.onInit(draw); }, [draw, props]);
+  useEffect(() => { 
+    if (draw && props.onInit) {
+      props.onInit(draw); 
+    }
+  }, [draw]); // Only run when 'draw' instance changes
   return null;
 }
 
@@ -65,6 +69,7 @@ const TABS = [
   { id: "fire",          label: "Forest Fire",      icon: Flame,     color: "#f97316" },
   { id: "snow",          label: "Snow & Ice",       icon: Snowflake, color: "#38bdf8" },
   { id: "landslide",     label: "Landslide",        icon: Mountain,  color: "#ef4444" },
+  { id: "building",      label: "Buildings",        icon: Building2, color: "#a855f7" },
 ];
 
 // ── Color palette for DW classes ─────────────────────────────
@@ -96,11 +101,17 @@ export default function TerrainGuardian() {
   const [loading, setLoading] = useState(false);
   const [overlayTiles, setOverlayTiles] = useState<string | null>(null);
   const [overlayName, setOverlayName] = useState("");
+  const [localOverlay, setLocalOverlay] = useState<{ b64: string; coordinates: any } | null>(null);
 
   // LULC state
   const [lulcYear, setLulcYear] = useState(2024);
   const [lulcSeason, setLulcSeason] = useState("annual");
+  const [lulcModel, setLulcModel] = useState("dynamic_world");
   const [lulcResult, setLulcResult] = useState<any>(null);
+
+  // HITL Active Learning State
+  const [hitlClass, setHitlClass] = useState("1");
+  const [isTraining, setIsTraining] = useState(false);
 
   // Deforestation State
   const [defStartYear, setDefStartYear] = useState(2001);
@@ -121,7 +132,16 @@ export default function TerrainGuardian() {
   const [snowResult, setSnowResult] = useState<any>(null);
   
   // Landslide State
+  const [landslideEngine, setLandslideEngine] = useState("gee");
   const [landslideResult, setLandslideResult] = useState<any>(null);
+  const [landslideTrainClass, setLandslideTrainClass] = useState("1");
+  const [isLandslideTraining, setIsLandslideTraining] = useState(false);
+
+  // Building State
+  const [buildingEngine, setBuildingEngine] = useState("gee");
+  const [buildingResult, setBuildingResult] = useState<any>(null);
+  const [buildingTrainClass, setBuildingTrainClass] = useState("1");
+  const [isBuildingTraining, setIsBuildingTraining] = useState(false);
 
   // ── Draw handlers ──────────────────────────────────────────
   const onUpdateDraw = useCallback((e: any) => {
@@ -153,19 +173,34 @@ export default function TerrainGuardian() {
   }, [geoJsonText, drawInstance]);
 
   const handleModeChange = (mode: string) => {
-    if (drawInstance) { drawInstance.changeMode(mode); setActiveMode(mode); }
+    if (drawInstance) { 
+      try {
+        drawInstance.changeMode(mode); 
+        setActiveMode(mode); 
+      } catch(e) {
+        console.warn("MapboxDraw is currently unmounted or stale", e);
+      }
+    }
   };
 
   const handleClear = () => {
-    if (drawInstance) drawInstance.deleteAll();
+    if (drawInstance) {
+      try {
+        drawInstance.deleteAll();
+      } catch(e) {
+        console.warn("MapboxDraw is currently unmounted or stale", e);
+      }
+    }
     setSelectedPolygon(null);
     setGeoJsonText("");
     setOverlayName("");
+    setLocalOverlay(null);
     setLulcResult(null);
     setFireResult(null);
     setSnowResult(null);
     setLandslideResult(null);
     setDeforestResult(null);
+    setBuildingResult(null);
     setLoading(false);
   };
 
@@ -179,6 +214,28 @@ export default function TerrainGuardian() {
   const runLulc = async () => {
     const geom = getGeometry();
     if (!geom) return;
+
+    // Check size limit for Custom 1D-CNN (Target: < 100 km²)
+    if (lulcModel === "custom_1dcnn") {
+      let coords = geom.type === "Feature" ? geom.geometry?.coordinates[0] : geom.coordinates[0];
+      if (coords && coords.length > 0) {
+        let minLon = 180, maxLon = -180, minLat = 90, maxLat = -90;
+        for (const pt of coords) {
+          minLon = Math.min(minLon, pt[0]); maxLon = Math.max(maxLon, pt[0]);
+          minLat = Math.min(minLat, pt[1]); maxLat = Math.max(maxLat, pt[1]);
+        }
+        const avgLat = (minLat + maxLat) / 2;
+        const heightKm = (maxLat - minLat) * 111.32;
+        const widthKm = (maxLon - minLon) * 111.32 * Math.cos(avgLat * (Math.PI / 180));
+        const areaKm2 = widthKm * heightKm;
+
+        if (areaKm2 > 150) {
+          alert(`Error: Area Selection Too Large for Local Model!\n\nLimit: ~150 km²\nYour Selection: ~${areaKm2.toFixed(1)} km²\n\nPlease draw a smaller region (like a single town) to execute the Neural Network on your laptop, or switch back to "Google Dynamic World".`);
+          return;
+        }
+      }
+    }
+
     setLoading(true);
     try {
       const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -186,9 +243,15 @@ export default function TerrainGuardian() {
         geojson: geom,
         year: lulcYear,
         season: lulcSeason,
+        model: lulcModel,
       });
       setLulcResult(res.data);
-      if (res.data.lulc_tiles) {
+      
+      if (res.data.custom_image_b64) {
+        setLocalOverlay({ b64: res.data.custom_image_b64, coordinates: res.data.coordinates });
+        setOverlayTiles("local_overlay"); // Using overlayTiles var state trigger
+        setOverlayName("Custom 1D-CNN Output");
+      } else if (res.data.lulc_tiles) {
         setOverlayTiles(res.data.lulc_tiles);
         setOverlayName("LULC Classification");
       }
@@ -196,6 +259,45 @@ export default function TerrainGuardian() {
       alert(`LULC analysis failed: ${err?.response?.data?.detail || err.message}`);
     }
     setLoading(false);
+  };
+
+  const runHitlTraining = async () => {
+    const geom = getGeometry();
+    if (!geom) {
+      alert("Please draw an area on the map to submit as training data.");
+      return;
+    }
+    setIsTraining(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/lulc/train`, {
+        geojson: geom,
+        class_label: parseInt(hitlClass)
+      });
+      alert(`✅ ${res.data.message}`);
+    } catch (err: any) {
+      alert(`❌ Active Learning failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setIsTraining(false);
+  };
+
+  const runAutoDistillTraining = async () => {
+    const geom = getGeometry();
+    if (!geom) {
+      alert("Please draw an area on the map to auto-label.");
+      return;
+    }
+    setIsTraining(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/lulc/distill`, {
+        geojson: geom
+      });
+      alert(`✅ ${res.data.message}`);
+    } catch (err: any) {
+      alert(`❌ Auto-Distill failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setIsTraining(false);
   };
 
   // ── Forest Fire Analysis ───────────────────────────────────
@@ -257,9 +359,14 @@ export default function TerrainGuardian() {
       const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const res = await axios.post(`${serverUrl}/api/landslide`, {
         geojson: geom,
+        engine: landslideEngine,
       });
       setLandslideResult(res.data);
-      if (res.data.class_tiles) {
+      if (res.data.custom_image_b64) {
+        setLocalOverlay({ b64: res.data.custom_image_b64, coordinates: res.data.coordinates });
+        setOverlayTiles("local_overlay");
+        setOverlayName("Deep Learning Susceptibility");
+      } else if (res.data.class_tiles) {
         setOverlayTiles(res.data.class_tiles);
         setOverlayName("Landslide Risk Classes");
       }
@@ -267,6 +374,134 @@ export default function TerrainGuardian() {
       alert(`Landslide analysis failed: ${err?.response?.data?.detail || err.message}`);
     }
     setLoading(false);
+  };
+
+  const runLandslideTraining = async () => {
+    const geom = getGeometry();
+    if (!geom) {
+      alert("Please draw an area on the map to submit as training data.");
+      return;
+    }
+    setIsLandslideTraining(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/landslide/train`, {
+        geojson: geom,
+        class_label: parseInt(landslideTrainClass)
+      });
+      alert(`✅ ${res.data.message}`);
+    } catch (err: any) {
+      alert(`❌ Active Learning failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setIsLandslideTraining(false);
+  };
+
+  const runLandslideDistill = async () => {
+    const geom = getGeometry();
+    if (!geom) {
+      alert("Please draw an area on the map to auto-label.");
+      return;
+    }
+    setIsLandslideTraining(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/landslide/distill`, {
+        geojson: geom
+      });
+      alert(`✅ ${res.data.message}`);
+    } catch (err: any) {
+      alert(`❌ Auto-Distill failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setIsLandslideTraining(false);
+  };
+
+  const runLandslideAutoCollect = async () => {
+    setIsLandslideTraining(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/landslide/autocollect`);
+      alert(`✅ ${res.data.message}`);
+    } catch (err: any) {
+      alert(`❌ Auto-Collect failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setIsLandslideTraining(false);
+  };
+
+  // ── Building Analysis ──────────────────────────────────
+  const runBuilding = async () => {
+    const geom = getGeometry();
+    if (!geom) return;
+    setLoading(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/building`, {
+        geojson: geom,
+        engine: buildingEngine,
+      });
+      setBuildingResult(res.data.data);
+      if (res.data.data.custom_image_b64) {
+        setLocalOverlay({ b64: res.data.data.custom_image_b64, coordinates: res.data.data.coordinates });
+        setOverlayTiles("local_overlay");
+        setOverlayName("Deep Learning Buildings");
+      } else if (res.data.data.tile_url) {
+        setOverlayTiles(res.data.data.tile_url);
+        setOverlayName("GEE Open Buildings");
+      }
+    } catch (err: any) {
+      alert(`Building analysis failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setLoading(false);
+  };
+
+  const runBuildingTraining = async () => {
+    const geom = getGeometry();
+    if (!geom) {
+      alert("Please draw an area on the map to submit as training data.");
+      return;
+    }
+    setIsBuildingTraining(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/building/train`, {
+        geojson: geom,
+        class_label: parseInt(buildingTrainClass)
+      });
+      alert(`✅ ${res.data.message}`);
+    } catch (err: any) {
+      alert(`❌ Active Learning failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setIsBuildingTraining(false);
+  };
+
+  const runBuildingDistill = async () => {
+    const geom = getGeometry();
+    if (!geom) {
+      alert("Please draw an area on the map to auto-label.");
+      return;
+    }
+    setIsBuildingTraining(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/building/distill`, {
+        geojson: geom
+      });
+      alert(`✅ ${res.data.message}`);
+    } catch (err: any) {
+      alert(`❌ Auto-Distill failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setIsBuildingTraining(false);
+  };
+
+  const runBuildingAutoCollect = async () => {
+    setIsBuildingTraining(true);
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const res = await axios.post(`${serverUrl}/api/building/autocollect`);
+      alert(`✅ ${res.data.message}`);
+    } catch (err: any) {
+      alert(`❌ Auto-Collect failed: ${err?.response?.data?.detail || err.message}`);
+    }
+    setIsBuildingTraining(false);
   };
 
   // ── Deforestation Analysis ──────────────────────────────────
@@ -299,17 +534,37 @@ export default function TerrainGuardian() {
   };
 
   // ── Map style with overlay ─────────────────────────────────
-  const mapStyle = overlayTiles ? {
-    ...MAP_STYLE,
-    sources: {
-      ...MAP_STYLE.sources,
-      "gee-overlay": { type: "raster" as const, tiles: [overlayTiles], tileSize: 256, attribution: "GEE" },
-    },
-    layers: [
-      ...MAP_STYLE.layers,
-      { id: "gee-overlay-layer", type: "raster" as const, source: "gee-overlay", minzoom: 0, maxzoom: 19, paint: { "raster-opacity": 0.75 } },
-    ],
-  } : MAP_STYLE;
+  let mapStyle: any = MAP_STYLE;
+  
+  if (overlayTiles === "local_overlay" && localOverlay?.b64) {
+    mapStyle = {
+      ...MAP_STYLE,
+      sources: {
+        ...MAP_STYLE.sources,
+        "custom-overlay": {
+          type: "image",
+          url: `data:image/png;base64,${localOverlay.b64}`,
+          coordinates: localOverlay.coordinates
+        }
+      },
+      layers: [
+        ...MAP_STYLE.layers,
+        { id: "custom-overlay-layer", type: "raster", source: "custom-overlay", paint: { "raster-opacity": 0.85 } }
+      ]
+    };
+  } else if (overlayTiles) {
+    mapStyle = {
+      ...MAP_STYLE,
+      sources: {
+        ...MAP_STYLE.sources,
+        "gee-overlay": { type: "raster", tiles: [overlayTiles], tileSize: 256, attribution: "GEE" },
+      },
+      layers: [
+        ...MAP_STYLE.layers,
+        { id: "gee-overlay-layer", type: "raster", source: "gee-overlay", minzoom: 0, maxzoom: 19, paint: { "raster-opacity": 0.75 } },
+      ],
+    };
+  }
 
   const hasGeom = !!selectedPolygon || !!geoJsonText;
 
@@ -429,12 +684,28 @@ export default function TerrainGuardian() {
                     <option value="wet">Wet</option>
                   </select>
                 </div>
+                <div className="flex flex-col gap-1 col-span-2 mt-1">
+                  <label className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Model Engine</label>
+                  <select value={lulcModel} onChange={(e) => setLulcModel(e.target.value)}
+                    className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sky-300 font-mono text-xs focus:border-emerald-500/50 focus:outline-none transition-colors w-full">
+                    <option value="dynamic_world">☁️ Google Dynamic World (Fast Cloud API)</option>
+                    <option value="custom_1dcnn">💻 Custom 1D-CNN (Local TensorFlow Processing)</option>
+                  </select>
+                </div>
               </div>
+              
+              <AnimatePresence>
+                {lulcModel === "custom_1dcnn" && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="text-[10px] text-yellow-500/80 bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-2.5 font-mono">
+                    ⚠️ Running intense neural network classification via local device. Will export and bind PNG base64 frame mapping instead of dynamic Leaflet tiling.
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Run Button */}
-              <button onClick={runLulc} disabled={loading || !hasGeom}
+              <button onClick={runLulc} disabled={loading || !hasGeom || isTraining}
                 className={`relative group overflow-hidden flex items-center justify-center gap-3 w-full py-3.5 rounded-full font-semibold tracking-wide transition-all duration-300 text-sm ${
-                  loading || !hasGeom
+                  loading || !hasGeom || isTraining
                     ? 'bg-white/5 text-slate-500 cursor-not-allowed border border-white/10'
                     : 'bg-emerald-500 text-black shadow-[0_0_30px_rgba(0,212,170,0.2)] hover:shadow-[0_0_40px_rgba(0,212,170,0.4)] hover:bg-emerald-400'
                 }`}
@@ -443,10 +714,57 @@ export default function TerrainGuardian() {
                 {loading ? "Classifying..." : "Classify Land Use"}
               </button>
 
-              <button onClick={handleClear} disabled={!hasGeom && !lulcResult}
+              <button onClick={handleClear} disabled={(!hasGeom && !lulcResult) || isTraining}
                 className="w-full bg-transparent border border-white/10 hover:border-white/30 hover:bg-white/5 text-slate-400 hover:text-white text-xs font-medium tracking-wide py-2.5 rounded-full transition-all disabled:opacity-30">
                 Clear All
               </button>
+
+              {/* Active Learning Form (Only visible under Custom 1D CNN) */}
+              {lulcModel === "custom_1dcnn" && (
+                <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 flex flex-col gap-4 mt-1">
+                  <h3 className="text-[11px] font-mono font-bold tracking-widest text-slate-400 uppercase">Teach Model (Active Learning)</h3>
+                  <p className="text-[10px] text-slate-500 leading-relaxed -mt-2">
+                    Draw a polygon, select its true class, and retrain the 1D-CNN locally.
+                  </p>
+                  <select value={hitlClass} onChange={(e) => setHitlClass(e.target.value)} disabled={isTraining}
+                    className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-emerald-500/50 appearance-none">
+                    <option value="1">Water</option>
+                    <option value="2">Trees</option>
+                    <option value="3">Grass</option>
+                    <option value="4">Flooded Vegetation</option>
+                    <option value="5">Crops</option>
+                    <option value="6">Shrub & Scrub</option>
+                    <option value="7">Built Area</option>
+                    <option value="8">Bare Ground</option>
+                    <option value="9">Snow & Ice</option>
+                  </select>
+                  <button onClick={runHitlTraining} disabled={isTraining || !hasGeom}
+                    className={`w-full py-2.5 rounded-xl text-xs font-medium tracking-wide transition-all ${
+                      isTraining || !hasGeom
+                        ? 'bg-white/5 text-slate-500 cursor-not-allowed border border-white/5'
+                        : 'bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    {isTraining ? "Finetuning Local CNN..." : "Submit as Training Data"}
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <div className="h-px bg-white/10 flex-1"></div>
+                    <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">OR</span>
+                    <div className="h-px bg-white/10 flex-1"></div>
+                  </div>
+
+                  <button onClick={runAutoDistillTraining} disabled={isTraining || !hasGeom}
+                    className={`w-full py-2.5 rounded-xl text-xs font-medium tracking-wide transition-all ${
+                      isTraining || !hasGeom
+                        ? 'bg-transparent text-slate-500 cursor-not-allowed border border-white/5'
+                        : 'bg-transparent text-slate-300 border border-white/10 hover:bg-white/5 hover:text-white'
+                    }`}
+                  >
+                    Auto-Train via Google Dynamic World
+                  </button>
+                </div>
+              )}
 
               {/* LULC Results */}
               <AnimatePresence>
@@ -469,7 +787,9 @@ export default function TerrainGuardian() {
                     </div>
 
                     {/* Info card */}
-                    <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-4 flex flex-col gap-2 font-mono text-[11px]">
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5">
+                      <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Analysis Details</h3>
+                      <div className="space-y-2.5 font-mono text-[11px]">
                       {[
                         ['SOURCE', lulcResult.stats.source],
                         ['RESOLUTION', lulcResult.stats.resolution],
@@ -479,11 +799,12 @@ export default function TerrainGuardian() {
                         ['DOMINANT CLASS', lulcResult.stats.dominant_class],
                         ['TOTAL AREA', `${lulcResult.stats.total_area_km2} km²`],
                       ].map(([label, val]) => (
-                        <div key={String(label)} className="flex justify-between">
+                        <div key={String(label)} className="flex justify-between items-center">
                           <span className="text-slate-500">{String(label)}</span>
-                          <span className="text-emerald-300">{String(val)}</span>
+                          <span className="text-slate-300">{String(val)}</span>
                         </div>
                       ))}
+                      </div>
                     </div>
 
                     {/* Legend */}
@@ -497,47 +818,49 @@ export default function TerrainGuardian() {
                     </div>
 
                     {/* Layer Switches */}
-                    <div className="flex flex-col gap-2">
-                      <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Map Layers</span>
-                      <div className="grid grid-cols-3 gap-1.5">
-                        {[
-                          { key: 'lulc_tiles', label: 'LULC', emoji: '🗺️' },
-                          { key: 'rgb_tiles', label: 'RGB', emoji: '🛰' },
-                          { key: 'ndvi_tiles', label: 'NDVI', emoji: '🌿' },
-                          { key: 'ndbi_tiles', label: 'NDBI', emoji: '🏗' },
-                          { key: 'mndwi_tiles', label: 'MNDWI', emoji: '💧' },
-                        ].map((l) => (
-                          <button key={l.key} onClick={() => switchLayer(lulcResult[l.key], l.label)}
-                            className={`text-[10px] px-2 py-2 rounded-lg border font-bold tracking-wider transition-all ${
-                              overlayName === l.label
-                                ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300'
-                                : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-white'
-                            }`}
-                          >
-                            {l.emoji} {l.label}
-                          </button>
-                        ))}
-                      </div>
+                    {lulcModel !== "custom_1dcnn" && (
+                      <div className="flex flex-col gap-2">
+                        <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Map Layers</span>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {[
+                            { key: 'lulc_tiles', label: 'LULC', emoji: '🗺️' },
+                            { key: 'rgb_tiles', label: 'RGB', emoji: '🛰' },
+                            { key: 'ndvi_tiles', label: 'NDVI', emoji: '🌿' },
+                            { key: 'ndbi_tiles', label: 'NDBI', emoji: '🏗' },
+                            { key: 'mndwi_tiles', label: 'MNDWI', emoji: '💧' },
+                          ].map((l) => (
+                            <button key={l.key} onClick={() => switchLayer(lulcResult[l.key], l.label)}
+                              className={`text-[10px] px-2 py-2 rounded-lg border font-bold tracking-wider transition-all ${
+                                overlayName === l.label
+                                  ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300'
+                                  : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-white'
+                              }`}
+                            >
+                              {l.emoji} {l.label}
+                            </button>
+                          ))}
+                        </div>
 
-                      <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold mt-2">Probability Heatmaps</span>
-                      <div className="grid grid-cols-3 gap-1.5">
-                        {[
-                          { key: 'built_prob_tiles', label: 'Built Area', emoji: '🏘' },
-                          { key: 'trees_prob_tiles', label: 'Trees', emoji: '🌳' },
-                          { key: 'crops_prob_tiles', label: 'Crops', emoji: '🌾' },
-                        ].map((l) => (
-                          <button key={l.key} onClick={() => switchLayer(lulcResult[l.key], l.label)}
-                            className={`text-[10px] px-2 py-2 rounded-lg border font-bold tracking-wider transition-all ${
-                              overlayName === l.label
-                                ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300'
-                                : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-white'
-                            }`}
-                          >
-                            {l.emoji} {l.label}
-                          </button>
-                        ))}
+                        <span className="text-[9px] text-slate-500 uppercase tracking-widest font-bold mt-2">Probability Heatmaps</span>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {[
+                            { key: 'built_prob_tiles', label: 'Built Area', emoji: '🏘' },
+                            { key: 'trees_prob_tiles', label: 'Trees', emoji: '🌳' },
+                            { key: 'crops_prob_tiles', label: 'Crops', emoji: '🌾' },
+                          ].map((l) => (
+                            <button key={l.key} onClick={() => switchLayer(lulcResult[l.key], l.label)}
+                              className={`text-[10px] px-2 py-2 rounded-lg border font-bold tracking-wider transition-all ${
+                                overlayName === l.label
+                                  ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-300'
+                                  : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-white'
+                              }`}
+                            >
+                              {l.emoji} {l.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -751,19 +1074,93 @@ export default function TerrainGuardian() {
               <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 flex flex-col gap-4">
                 <h3 className="text-[11px] font-mono font-bold tracking-widest text-slate-400 uppercase">Analysis Parameters</h3>
                 
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Analysis Engine</label>
+                  <select
+                    value={landslideEngine}
+                    onChange={(e) => setLandslideEngine(e.target.value)}
+                    className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-rose-500/50 appearance-none"
+                  >
+                    <option value="gee">Heuristic / GEE (Random Forest)</option>
+                    <option value="deep_learning">Landslide4Sense U-Net (Deep Learning)</option>
+                  </select>
+                </div>
+
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  Calculates landslide susceptibility using a Random Forest model trained on variables including elevation, slope, aspect, and proximity to drainage.
+                  {landslideEngine === "gee" 
+                    ? "Calculates landslide susceptibility using a Random Forest model trained on variables including elevation, slope, aspect, and proximity to drainage."
+                    : "Uses a Landslide4Sense U-Net Deep Learning model trained on a 6-channel feature set (RED/GREEN/BLUE/NDVI + SLOPE + ELEVATION)."}
                 </p>
 
                 <button
                   onClick={runLandslide}
-                  disabled={!selectedPolygon || loading}
+                  disabled={!selectedPolygon || loading || isLandslideTraining}
                   className="w-full mt-2 bg-gradient-to-r from-rose-600 to-red-700 hover:from-rose-500 hover:to-red-600 text-white font-medium py-3 rounded-xl shadow-lg shadow-rose-900/20 disabled:opacity-50 flex justify-center items-center gap-2 transition-all"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mountain className="w-4 h-4" />}
                   {loading ? "Analyzing Terrain..." : "Run Susceptibility Analysis"}
                 </button>
               </div>
+
+              <AnimatePresence>
+                {landslideEngine === "deep_learning" && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="bg-white/[0.02] border border-white/5 rounded-xl p-5 flex flex-col gap-4">
+                    <h3 className="text-[11px] font-mono font-bold tracking-widest text-slate-400 uppercase">Teach Model (Active Learning)</h3>
+                    <p className="text-[10px] text-slate-500 leading-relaxed -mt-2">
+                      Draw a polygon, select its true class, and submit it to instantly fine-tune the custom Deep Learning U-Net.
+                    </p>
+                    <select value={landslideTrainClass} onChange={(e) => setLandslideTrainClass(e.target.value)} disabled={isLandslideTraining}
+                      className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-rose-500/50 appearance-none">
+                      <option value="1">Landslide / Susceptible Area</option>
+                      <option value="0">Safe / Non-Landslide Area</option>
+                    </select>
+                    <button onClick={runLandslideTraining} disabled={isLandslideTraining || !hasGeom}
+                      className={`w-full py-2.5 rounded-xl text-xs font-medium tracking-wide transition-all ${
+                        isLandslideTraining || !hasGeom
+                          ? 'bg-white/5 text-slate-500 cursor-not-allowed border border-white/5'
+                          : 'bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      {isLandslideTraining ? "Finetuning Local U-Net..." : "Submit as Training Data"}
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <div className="h-px bg-white/10 flex-1"></div>
+                      <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">OR</span>
+                      <div className="h-px bg-white/10 flex-1"></div>
+                    </div>
+
+                    <button onClick={runLandslideDistill} disabled={isLandslideTraining || !hasGeom}
+                      className={`w-full py-2.5 rounded-xl text-xs font-medium tracking-wide transition-all ${
+                        isLandslideTraining || !hasGeom
+                          ? 'bg-transparent text-slate-500 cursor-not-allowed border border-white/5'
+                          : 'bg-transparent text-slate-300 border border-white/10 hover:bg-white/5 hover:text-white'
+                      }`}
+                    >
+                      Auto-Train via GEE Pipeline
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <div className="h-px bg-white/10 flex-1"></div>
+                      <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">OR</span>
+                      <div className="h-px bg-white/10 flex-1"></div>
+                    </div>
+
+                    <button onClick={runLandslideAutoCollect} disabled={isLandslideTraining}
+                      className={`w-full py-2.5 rounded-xl text-xs font-medium tracking-wide transition-all ${
+                        isLandslideTraining
+                          ? 'bg-white/5 text-slate-500 cursor-not-allowed border border-white/5'
+                          : 'bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      {isLandslideTraining ? "Collecting..." : "Auto-Collect Training Data (5 Mountain Regions)"}
+                    </button>
+                    <p className="text-[9px] text-slate-600 text-center -mt-2">
+                      Downloads terrain data from Kedarnath, Shimla, Darjeeling etc. and trains automatically
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <AnimatePresence>
                 {landslideResult && (
@@ -774,12 +1171,14 @@ export default function TerrainGuardian() {
                       <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Data Layers</h3>
                       <div className="flex flex-col gap-2">
                         {[
-                          { id: landslideResult.class_tiles, name: "Risk Classification", color: "border-rose-500", text: "text-rose-400" },
-                          { id: landslideResult.probability_tiles, name: "Continuous Probability", color: "border-orange-500", text: "text-orange-400" },
-                          { id: landslideResult.slope_tiles, name: "Terrain Slope (Degrees)", color: "border-slate-500", text: "text-slate-400" },
-                          { id: landslideResult.elevation_tiles, name: "Elevation (NASADEM)", color: "border-emerald-500", text: "text-emerald-400" },
-                          { id: landslideResult.hand_tiles, name: "Height Above Nearest Drainage", color: "border-blue-500", text: "text-blue-400" },
-                        ].map((layer, i) => (
+                          landslideResult.custom_image_b64 
+                            ? { id: "local_overlay", name: "Deep Learning Prediction", color: "border-rose-500", text: "text-rose-400" }
+                            : { id: landslideResult.class_tiles, name: "Risk Classification", color: "border-rose-500", text: "text-rose-400" },
+                          landslideResult.probability_tiles && { id: landslideResult.probability_tiles, name: "Continuous Probability", color: "border-orange-500", text: "text-orange-400" },
+                          landslideResult.slope_tiles && { id: landslideResult.slope_tiles, name: "Terrain Slope (Degrees)", color: "border-slate-500", text: "text-slate-400" },
+                          landslideResult.elevation_tiles && { id: landslideResult.elevation_tiles, name: "Elevation (NASADEM)", color: "border-emerald-500", text: "text-emerald-400" },
+                          landslideResult.hand_tiles && { id: landslideResult.hand_tiles, name: "Height Above Nearest Drainage", color: "border-blue-500", text: "text-blue-400" },
+                        ].filter(Boolean).map((layer: any, i) => (
                           <button key={i} onClick={() => switchLayer(layer.id, layer.name)}
                             className={`flex items-center gap-3 p-3 rounded-lg border text-xs transition-all ${
                               overlayTiles === layer.id
@@ -830,7 +1229,7 @@ export default function TerrainGuardian() {
                       </div>
                       
                       <div className="mt-5 pt-4 border-t border-white/10 flex justify-between items-center text-[11px] text-slate-500">
-                         <span>Model Accuracy (RF):</span>
+                         <span>Model Accuracy ({landslideEngine === 'gee' ? 'RF' : 'U-Net DL'}):</span>
                          <span className="font-mono text-emerald-400">{landslideResult.stats?.accuracy}%</span>
                       </div>
                     </div>
@@ -943,8 +1342,150 @@ export default function TerrainGuardian() {
             </motion.div>
           )}
 
+          {/* BUILDING TAB */}
+          {activeTab === "building" && (
+            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex flex-col gap-5">
+              <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 flex flex-col gap-4">
+                <h3 className="text-[11px] font-mono font-bold tracking-widest text-slate-400 uppercase">Analysis Parameters</h3>
+                
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Analysis Engine</label>
+                  <select
+                    value={buildingEngine}
+                    onChange={(e) => setBuildingEngine(e.target.value)}
+                    className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500/50 appearance-none"
+                  >
+                    <option value="gee">Google Open Buildings V3</option>
+                    <option value="deep_learning">Custom ResU-Net (Deep Learning)</option>
+                  </select>
+                </div>
+
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  {buildingEngine === "gee" 
+                    ? "Fetches pre-computed, highly accurate building footprints natively from Google Earth Engine's V3 Open Buildings dataset."
+                    : "Uses a local Residual U-Net Deep Learning model trained to segment structures from 3-channel RGB high-resolution imagery."}
+                </p>
+
+                <button
+                  onClick={runBuilding}
+                  disabled={!selectedPolygon || loading || isBuildingTraining}
+                  className="w-full mt-2 bg-gradient-to-r from-purple-600 to-indigo-700 hover:from-purple-500 hover:to-indigo-600 text-white font-medium py-3 rounded-xl shadow-lg shadow-purple-900/20 disabled:opacity-50 flex justify-center items-center gap-2 transition-all"
+                >
+                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" />}
+                  {loading ? "Analyzing Infrastructure..." : "Run Building Detection"}
+                </button>
+              </div>
+
+              <AnimatePresence>
+                {buildingEngine === "deep_learning" && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="bg-white/[0.02] border border-white/5 rounded-xl p-5 flex flex-col gap-4">
+                    <h3 className="text-[11px] font-mono font-bold tracking-widest text-slate-400 uppercase">Teach Model (Active Learning)</h3>
+                    <p className="text-[10px] text-slate-500 leading-relaxed -mt-2">
+                      Draw a polygon, select its true class, and submit it to instantly fine-tune the Custom U-Net.
+                    </p>
+                    <select value={buildingTrainClass} onChange={(e) => setBuildingTrainClass(e.target.value)} disabled={isBuildingTraining}
+                      className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500/50 appearance-none">
+                      <option value="1">Building / Urban Area</option>
+                      <option value="0">Empty / Bare Land</option>
+                    </select>
+                    <button onClick={runBuildingTraining} disabled={isBuildingTraining || !hasGeom}
+                      className={`w-full py-2.5 rounded-xl text-xs font-medium tracking-wide transition-all ${
+                        isBuildingTraining || !hasGeom
+                          ? 'bg-white/5 text-slate-500 cursor-not-allowed border border-white/5'
+                          : 'bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      {isBuildingTraining ? "Finetuning Local U-Net..." : "Submit as Training Data"}
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <div className="h-px bg-white/10 flex-1"></div>
+                      <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">OR</span>
+                      <div className="h-px bg-white/10 flex-1"></div>
+                    </div>
+
+                    <button onClick={runBuildingDistill} disabled={isBuildingTraining || !hasGeom}
+                      className={`w-full py-2.5 rounded-xl text-xs font-medium tracking-wide transition-all ${
+                        isBuildingTraining || !hasGeom
+                          ? 'bg-transparent text-slate-500 cursor-not-allowed border border-white/5'
+                          : 'bg-transparent text-slate-300 border border-white/10 hover:bg-white/5 hover:text-white'
+                      }`}
+                    >
+                      Auto-Train via GEE Pipeline
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <div className="h-px bg-white/10 flex-1"></div>
+                      <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">OR</span>
+                      <div className="h-px bg-white/10 flex-1"></div>
+                    </div>
+
+                    <button onClick={runBuildingAutoCollect} disabled={isBuildingTraining}
+                      className={`w-full py-2.5 rounded-xl text-xs font-medium tracking-wide transition-all ${
+                        isBuildingTraining
+                          ? 'bg-white/5 text-slate-500 cursor-not-allowed border border-white/5'
+                          : 'bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      {isBuildingTraining ? "Collecting..." : "Auto-Collect Training Data (5 Indian Cities)"}
+                    </button>
+                    <p className="text-[9px] text-slate-600 text-center -mt-2">
+                      Downloads imagery from Mumbai, Delhi, Pune etc. and trains automatically
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <AnimatePresence>
+                {buildingResult && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="flex flex-col gap-4 overflow-visible">
+                    
+                    {/* Layer controls */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5">
+                      <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Data Layers</h3>
+                      <div className="flex flex-col gap-2">
+                        {[
+                          buildingResult.custom_image_b64 
+                            ? { id: "local_overlay", name: "Deep Learning Prediction", color: "border-purple-500", text: "text-purple-400" }
+                            : { id: buildingResult.tile_url, name: "Google Open Buildings", color: "border-red-500", text: "text-red-400" },
+                        ].filter(Boolean).map((layer: any, i) => (
+                          <button key={i} onClick={() => switchLayer(layer.id, layer.name)}
+                            className={`flex items-center gap-3 p-3 rounded-lg border text-xs transition-all ${
+                              overlayTiles === layer.id
+                                ? `bg-white/10 ${layer.color} ${layer.text} shadow-[0_0_15px_rgba(255,255,255,0.05)]`
+                                : 'bg-black/20 border-white/5 text-slate-400 hover:bg-white/5'
+                            }`}
+                          >
+                            <Layers className="w-4 h-4" />
+                            <span className="flex-1 text-left font-medium">{layer.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Stats */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-5 mt-2">
+                      <h3 className="text-[11px] font-mono tracking-widest text-slate-400 mb-4 uppercase">Urban Statistics</h3>
+                      
+                      <div className="space-y-3">
+                        {buildingResult.stats?.map((stat: any, index: number) => (
+                           <div key={index} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
+                              <span className="text-xs font-semibold text-slate-300">{stat.name}</span>
+                              <span className="font-mono text-sm font-bold text-emerald-400">{stat.value}</span>
+                           </div>
+                        ))}
+                      </div>
+
+                    </div>
+
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+
           {/* OTHER TABS — Placeholder */}
-          {!["lulc", "fire", "snow", "landslide", "deforestation"].includes(activeTab) && (
+          {!["lulc", "fire", "snow", "landslide", "deforestation", "building"].includes(activeTab) && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
               className="flex flex-col items-center justify-center gap-3 py-12 text-center"
             >
