@@ -23,10 +23,10 @@ try:
 except ImportError:
     tf = None
 
-LULC_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'lulc_training_data'))
-MODEL_PATH = os.path.join(LULC_DATA_DIR, 'model', 'lulc_custom_model.h5')
-CLASSES_PATH = os.path.join(LULC_DATA_DIR, 'model', 'lulc_classes.npy')
-CSV_PATH = os.path.join(LULC_DATA_DIR, 'samples', 'lulc_samples.csv')
+LULC_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'training_data', 'lulc_training_data'))
+MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'backend', 'ml_models', 'lulc_custom_model.h5'))
+CLASSES_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'backend', 'ml_models', 'lulc_classes.npy'))
+CSV_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'lulc_samples.csv'))
 TEMP_TIF = "temp_lulc_roi.tif"
 
 BANDS = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
@@ -185,7 +185,7 @@ def add_active_learning_sample(geojson_geom, class_label: int, year: int = 2024,
         import sys
         import os
         sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
-        from lulc_trainer import train_lulc_model
+        from ml_training.lulc_trainer import train_lulc_model
         train_lulc_model()
         print(f"[CUSTOM LULC HITL] Model Retrained Successfully.")
         return {"status": "success", "message": "Model updated successfully with user label!"}
@@ -258,7 +258,7 @@ def add_ui_distill_sample(geojson_geom, year: int = 2024, num_points: int = 250)
         import sys
         import os
         sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
-        from lulc_trainer import train_lulc_model
+        from ml_training.lulc_trainer import train_lulc_model
         train_lulc_model()
         return {"status": "success", "message": f"Successfully auto-labeled {rows_written} pixels from Dynamic World and retrained Model!"}
     except Exception as e:

@@ -70,7 +70,7 @@ def extract_training_pixels(region: ee.Geometry, num_points: int = 500, year: in
 
     # 4. Append to CSV
     # Expected columns: B4, B3, B2, B8, B11, B12, NDVI, NDBI, MNDWI, NDSLI, class, sample
-    csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../lulc_training_data/samples/lulc_samples.csv'))
+    csv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../data/training_data/lulc_training_data/samples/lulc_samples.csv'))
     
     # Track distributions
     class_counts = {i: 0 for i in range(1, 10)}

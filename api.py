@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import API_HOST, API_PORT
-from backend.routers import detect, verify, lulc, fire, snow, landslide, deforestation, building
+from backend.controllers import detect, verify, lulc, fire, snow, landslide, deforestation, building
 from backend.utils.db import ensure_verified_table
 
 # ── Logging ───────────────────────────────────────────────────────

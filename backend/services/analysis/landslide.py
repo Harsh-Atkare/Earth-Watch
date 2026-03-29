@@ -58,8 +58,16 @@ def build_terrain_stack(region):
           .median())
     ndvi = s2.normalizedDifference(['B8', 'B4']).rename('ndvi').clip(region)
 
-    # Stack 10 bands (removed NDWI, NDBI, CHIRPS, MODIS to prevent memory crash)
-    # These can be added back as overlay-only layers that are NOT part of the RF stack
+    # Precipitation (CHIRPS) - Added for Tutor's Methodology
+    try:
+        chirps = (ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
+                  .filterBounds(region)
+                  .filterDate(f'{current_year - 1}-01-01', f'{current_year - 1}-12-31'))
+        precipitation = chirps.sum().rename('precipitation').clip(region)
+    except:
+        precipitation = ee.Image(0).rename('precipitation').clip(region)
+
+    # Stack 10 bands
     stack = (elevation
              .addBands(slope)
              .addBands(aspect)
@@ -68,7 +76,8 @@ def build_terrain_stack(region):
              .addBands(hand)
              .addBands(tpi)
              .addBands(dist_drainage)
-             .addBands(ndvi))
+             .addBands(ndvi)
+             .addBands(precipitation))
 
     return stack
 
@@ -131,55 +140,61 @@ def analyze_landslide(geojson_geom, num_samples=200):
     stack = build_terrain_stack(region)
     band_names = stack.bandNames()
 
-    # ── SAMPLE GENERATION ──────────────────────────────────────
-    print("[LANDSLIDE] → Sampling terrain at 90m resolution...")
-    # Sample at 90m (not 30m!) to prevent GEE memory exhaustion
-    random_samples = stack.sample(
-        region=region, scale=SAMPLE_SCALE, numPixels=600, geometries=True
+    # ── SLOPE UNIT GENERATION (TUTOR METHODOLOGY) ──────────────────────
+    print("[LANDSLIDE] → Generating Slope Units (HydroSHEDS Catchments)...")
+    basins = ee.FeatureCollection('WWF/HydroSHEDS/v1/Basins/hybas_12').filterBounds(region)
+    
+    # Strictly isolate the 5 parameters the tutor defined in the video
+    tutor_bands = ['elevation', 'slope', 'aspect', 'precipitation', 'ndvi']
+    stack_subset = stack.select(tutor_bands)
+    
+    print("[LANDSLIDE] → Aggregating terrain features per Catchment (Slope Unit)...")
+    # Instead of pulling isolated pixel samples, we calculate the mathematical MEAN
+    # of the 5 variables entirely within the geometry of every single basin independently.
+    basin_stats = stack_subset.reduceRegions(
+        collection=basins,
+        reducer=ee.Reducer.mean(),
+        scale=90, # 90m protects memory while giving accurate averages
+        tileScale=4
     )
-
-    # Filter out nulls
-    valid_samples = random_samples.filter(ee.Filter.notNull(band_names))
+    
+    valid_samples = basin_stats.filter(ee.Filter.notNull(tutor_bands))
     total_valid = safe_get_info(valid_samples.size(), 0)
-    print(f"[LANDSLIDE]   Valid terrain pixels sampled: {total_valid}")
-
-    if total_valid < 20:
-        print(f"[LANDSLIDE] ⚠ Very few samples ({total_valid}). Results may be less accurate.")
+    print(f"[LANDSLIDE]   Total Catchments Analyzed: {total_valid}")
 
     if total_valid < 4:
         raise ValueError(
-            f"AOI too small! Found only {total_valid} terrain pixels. "
-            f"Please draw a larger area (at least 2km × 2km)."
+            f"AOI too small! Found only {total_valid} valid catchments. "
+            f"Please draw a larger area to span multiple valleys."
         )
 
-    # Split into high-risk (steepest 50%) and low-risk (flattest 50%)
+    # Split Catchments into high-risk (steepest 50%) and low-risk (flattest 50%)
     split_size = max(total_valid // 2, 2)
     occurrence = valid_samples.sort('slope', False).limit(split_size).map(lambda f: f.set('class', 1))
     non_occurrence = valid_samples.sort('slope', True).limit(split_size).map(lambda f: f.set('class', 0))
 
     num_occ = safe_get_info(occurrence.size(), 0)
-    num_non_occ = safe_get_info(non_occurrence.size(), 0)
-    print(f"[LANDSLIDE]   High-risk proxy samples: {num_occ}")
-    print(f"[LANDSLIDE]   Low-risk proxy samples: {num_non_occ}")
+    print(f"[LANDSLIDE]   High-risk proxy Catchments: {num_occ}")
 
-    samples = occurrence.merge(non_occurrence)
-    samples = samples.filter(ee.Filter.notNull(band_names))
-
-    # Split train/test (80/20 for small datasets)
-    samples = samples.randomColumn('random')
+    samples = occurrence.merge(non_occurrence).randomColumn('random')
     training = samples.filter(ee.Filter.lte('random', 0.8))
     testing = samples.filter(ee.Filter.gt('random', 0.8))
 
     train_size = safe_get_info(training.size(), 0)
     test_size = safe_get_info(testing.size(), 0)
-    print(f"[LANDSLIDE] → Training Random Forest ({NUM_TREES} trees, Train: {train_size}, Test: {test_size})...")
+    print(f"[LANDSLIDE] → Training Random Forest on Slope Units ({NUM_TREES} trees, Train: {train_size}, Test: {test_size})...")
 
-    # ── RANDOM FOREST ──────────────────────────────────────────
+    # Train directly on the BASINS, not pixels
     rf = (ee.Classifier.smileRandomForest(NUM_TREES)
-          .train(training, 'class', band_names)
+          .train(training, 'class', tutor_bands)
           .setOutputMode('PROBABILITY'))
 
-    susceptibility = stack.select(band_names).classify(rf).clip(region)
+    # Classify the basins!
+    classified_basins = valid_samples.classify(rf, 'probability')
+    
+    print("[LANDSLIDE] → Converting colored catchments back into a solid map image...")
+    # This renders the discrete polygons to match the tutor's QGIS patchwork style natively!
+    susceptibility = classified_basins.reduceToImage(['probability'], ee.Reducer.first()).rename('probability').clip(region)
 
     # Reclassify into 4 categories
     classes = (susceptibility
@@ -296,11 +311,20 @@ def analyze_landslide(geojson_geom, num_samples=200):
     }
 
     # ── MAP TILES (only 5 core layers) ─────────────────────────
-    print("[LANDSLIDE] → Generating map tiles...")
-    class_vis = classes.visualize(
+    print("[LANDSLIDE] → Generating map tiles (with Polygon Borders)...")
+    base_class_vis = classes.visualize(
         min=1, max=4, palette=['#00c48c', '#f5d623', '#f5a623', '#ff3d5a'])
-    prob_vis = susceptibility.visualize(
+    base_prob_vis = susceptibility.visualize(
         min=0, max=1, palette=['#00c48c', '#90ee90', '#ffffcc', '#f5a623', '#ff3d5a'])
+
+    # Render Catchment Polygon Borders (QGIS-style)
+    empty = ee.Image().byte()
+    outlines = empty.paint(featureCollection=valid_samples, color=1, width=1)
+    outline_vis = outlines.visualize(palette=['#000000'])
+
+    # Overlay outlines on top of the raster heatmaps
+    class_vis = ee.ImageCollection([base_class_vis, outline_vis]).mosaic()
+    prob_vis = ee.ImageCollection([base_prob_vis, outline_vis]).mosaic()
     slope_vis = stack.select('slope').visualize(
         min=0, max=60, palette=['#0d1117', '#1c2535', '#f5a623', '#ff3d5a', '#ff0000'])
     elevation_vis = stack.select('elevation').visualize(

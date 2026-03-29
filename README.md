@@ -9,27 +9,26 @@ AI-powered geospatial system for detecting illegal mines using Sentinel-2 satell
 ```
 Earth_watch/
 ├── api.py                          ← FastAPI entry point
-├── mine_detection.py               ← GEE + inference pipeline
-├── setup_legal_mines.py            ← One-time DB setup
 ├── requirements.txt
 ├── .env                            ← Your secrets (gitignored)
 ├── .env.example                    ← Template to copy
 │
 ├── backend/
 │   ├── config.py                   ← All settings (reads .env)
-│   ├── routers/
-│   │   ├── detect.py               ← POST /api/detect
-│   │   └── verify.py               ← GET/POST /api/verified /api/verify
-│   └── utils/
-│       ├── db.py                   ← DB connection helpers
-│       └── thumbnail.py            ← Sentinel-2 thumbnail generator
+│   ├── controllers/                ← MVC API Controllers (detect, verify, lulc, building, etc.)
+│   ├── ml_models/                  ← Machine learning weights (*.h5, *.npy, *.pt)
+│   ├── services/
+│   │   └── analysis/               ← Core AI inference and GEE logic
+│   └── utils/                      ← Database and formatting utilities
 │
-├── clean_data_model/
-│   └── best_model.pt               ← Trained model weights (not in git)
+├── data/                           ← Global Geopackages and sample CSV/GeoJSONs
+│   └── training_data/              ← Offline GEE tile buffers for ML training
 │
-└── frontend/                       ← Next.js app
-    ├── .env.local                  ← NEXT_PUBLIC_API_URL (gitignored)
-    └── src/app/dashboard/page.tsx  ← Main dashboard
+├── frontend/                       ← Next.js dynamic dashboard
+│
+├── ml_training/                    ← Standalone AI training scripts
+│
+└── scripts/                        ← Developer testing scripts & scratchpads
 ```
 
 ---
@@ -134,9 +133,11 @@ python setup_legal_mines.py
 
 This will create the `legal_mines` table, insert all mining polygons, and build a spatial index for fast detection queries.
 
-### 8. Place your trained model
+### 8. Place your trained models
 ```
-clean_data_model/best_model.pt
+backend/ml_models/best_model.pt
+backend/ml_models/custom_building_best.h5
+...
 ```
 
 ---
@@ -173,6 +174,9 @@ Frontend runs at `http://localhost:3000`
 | POST   | `/api/detect`   | Run mine detection on a GeoJSON polygon  |
 | GET    | `/api/verified` | List all officer-verified mines          |
 | POST   | `/api/verify`   | Mark a mine as verified (USER_LEGAL)     |
+| POST   | `/api/lulc`     | Land Use Land Cover analysis             |
+| POST   | `/api/building` | Built-up area analysis                   |
+| POST   | `/api/landslide`| Landslide susceptibility analysis        |
 
 ### POST /api/detect — Request body
 ```json

@@ -59,17 +59,32 @@ def analyze_building(ee_object):
             ).getInfo().get('area', 0)
         else:
             total_built_area = 0
-        
+            
         built_area_ha = total_built_area / 10000.0
         density_pct = (total_built_area / aoi_area) * 100.0 if aoi_area > 0 else 0
         
         print(f"[BUILDING]   ✓ {built_area_ha:.2f} ha built-up, {density_pct:.1f}% density")
+        
     except Exception as e:
         print(f"[BUILDING]   ✗ Stats computation failed: {e}")
         logger.error(f"Failed to compute building stats: {e}")
         built_area_ha = 0
         density_pct = 0
         building_count = "N/A"
+        
+    # Attempt 3D Vector Export only if reasonable size
+    try:
+        if building_count != "N/A" and building_count > 0 and building_count <= 25000:
+            print("[BUILDING] → Exporting 3D Vector Geometries...")
+            building_geojson = buildings.limit(5000).getInfo()
+            print(f"[BUILDING]   ✓ Exported {len(building_geojson.get('features', []))} features to GeoJSON.")
+        else:
+            if building_count != "N/A" and building_count > 25000:
+                print(f"[BUILDING]   ⚠ Area too large ({building_count} buildings). Skipping 3D export, reverting to 2D tiles.")
+            building_geojson = None
+    except Exception as e:
+        print(f"[BUILDING]   ✗ GeoJSON export failed (Payload too large?): {e}")
+        building_geojson = None
 
     stats = [
         {'name': 'Total Built-Up Area (ha)', 'value': f"{built_area_ha:.2f}"},
@@ -81,6 +96,7 @@ def analyze_building(ee_object):
     print("[BUILDING] ━━━ Analysis complete! ━━━")
     return {
         'tile_url': tile_url,
+        'geojson': building_geojson,
         'stats': stats,
         'coordinates': ee_object.bounds().coordinates().getInfo()
     }

@@ -552,6 +552,28 @@ export default function TerrainGuardian() {
         { id: "custom-overlay-layer", type: "raster", source: "custom-overlay", paint: { "raster-opacity": 0.85 } }
       ]
     };
+  } else if (overlayTiles === "geojson_buildings" && buildingResult?.geojson) {
+    mapStyle = {
+      ...MAP_STYLE,
+      sources: {
+        ...MAP_STYLE.sources,
+        "gee-buildings-3d": { type: "geojson", data: buildingResult.geojson },
+      },
+      layers: [
+        ...MAP_STYLE.layers,
+        {
+          id: "gee-buildings-3d-layer",
+          type: "fill-extrusion",
+          source: "gee-buildings-3d",
+          paint: {
+            "fill-extrusion-color": "#f97316", // Beautiful vibrant orange for 3D buildings
+            "fill-extrusion-height": ["+", 8, ["*", ["get", "confidence"], 12]], // Taller buildings if higher confidence
+            "fill-extrusion-base": 0,
+            "fill-extrusion-opacity": 0.85
+          }
+        }
+      ]
+    };
   } else if (overlayTiles) {
     mapStyle = {
       ...MAP_STYLE,
@@ -621,19 +643,21 @@ export default function TerrainGuardian() {
           </div>
 
           {/* GeoJSON Toggle */}
-          <button onClick={() => setShowGeoJson(!showGeoJson)} className="flex items-center justify-between w-full p-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-slate-300 font-mono transition-colors">
-            <span className="flex items-center gap-2"><Layers className="w-3.5 h-3.5" /> Raw GeoJSON Input</span>
-            <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${showGeoJson ? 'rotate-180' : ''}`} />
-          </button>
-          <AnimatePresence>
-            {showGeoJson && (
-              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                <textarea value={geoJsonText} onChange={(e) => setGeoJsonText(e.target.value)}
-                  className="w-full bg-[#030712]/50 border border-white/10 rounded-lg p-3 text-emerald-300 font-mono text-[11px] h-28 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
-                  placeholder='{"type":"Polygon","coordinates":[...]}' spellCheck="false" />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <div className="flex flex-col gap-2">
+            <button onClick={() => setShowGeoJson(!showGeoJson)} className="flex items-center justify-between w-full p-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-slate-300 font-mono transition-colors">
+              <span className="flex items-center gap-2"><Layers className="w-3.5 h-3.5" /> Raw GeoJSON Input</span>
+              <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${showGeoJson ? 'rotate-180' : ''}`} />
+            </button>
+            <AnimatePresence>
+              {showGeoJson && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                  <textarea value={geoJsonText} onChange={(e) => setGeoJsonText(e.target.value)}
+                    className="w-full bg-[#030712]/50 border border-white/10 rounded-lg p-3 text-emerald-300 font-mono text-[11px] h-28 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all shadow-inner mt-1"
+                    placeholder='{"type":"Polygon","coordinates":[...]}' spellCheck="false" />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
 
           {/* ═══ TAB BAR — hidden when navigating from /launch ═══ */}
           {!isDirectNav && (
@@ -1140,24 +1164,7 @@ export default function TerrainGuardian() {
                       Auto-Train via GEE Pipeline
                     </button>
 
-                    <div className="flex items-center gap-2">
-                      <div className="h-px bg-white/10 flex-1"></div>
-                      <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">OR</span>
-                      <div className="h-px bg-white/10 flex-1"></div>
-                    </div>
 
-                    <button onClick={runLandslideAutoCollect} disabled={isLandslideTraining}
-                      className={`w-full py-2.5 rounded-xl text-xs font-medium tracking-wide transition-all ${
-                        isLandslideTraining
-                          ? 'bg-white/5 text-slate-500 cursor-not-allowed border border-white/5'
-                          : 'bg-white/5 text-slate-200 border border-white/10 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      {isLandslideTraining ? "Collecting..." : "Auto-Collect Training Data (5 Mountain Regions)"}
-                    </button>
-                    <p className="text-[9px] text-slate-600 text-center -mt-2">
-                      Downloads terrain data from Kedarnath, Shimla, Darjeeling etc. and trains automatically
-                    </p>
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -1447,7 +1454,10 @@ export default function TerrainGuardian() {
                         {[
                           buildingResult.custom_image_b64 
                             ? { id: "local_overlay", name: "Deep Learning Prediction", color: "border-purple-500", text: "text-purple-400" }
-                            : { id: buildingResult.tile_url, name: "Google Open Buildings", color: "border-red-500", text: "text-red-400" },
+                            : null,
+                          buildingResult.geojson 
+                            ? { id: "geojson_buildings", name: "Google Open Buildings (3D Models)", color: "border-orange-500", text: "text-orange-400" }
+                            : (buildingResult.tile_url ? { id: buildingResult.tile_url, name: "Google Open Buildings (2D Map)", color: "border-red-500", text: "text-red-400" } : null),
                         ].filter(Boolean).map((layer: any, i) => (
                           <button key={i} onClick={() => switchLayer(layer.id, layer.name)}
                             className={`flex items-center gap-3 p-3 rounded-lg border text-xs transition-all ${

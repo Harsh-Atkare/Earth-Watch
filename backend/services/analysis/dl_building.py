@@ -26,50 +26,7 @@ except ImportError:
     TF_AVAILABLE = False
     logger.warning("Tensorflow not available for dl_building.py")
 
-model_path = "custom_building_best.weights.h5"
-
-def conv2d_block(input_tensor, n_filters, kernel_size=3, batchnorm=True):
-    x = Conv2D(filters=n_filters, kernel_size=(kernel_size, kernel_size), kernel_initializer='he_normal', padding='same')(input_tensor)
-    if batchnorm: x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    
-    x = Conv2D(filters=n_filters, kernel_size=(kernel_size, kernel_size), kernel_initializer='he_normal', padding='same')(x)
-    if batchnorm: x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    return x
-
-def get_unet(input_img, n_filters=16, dropout=0.1, batchnorm=True):
-    c1 = conv2d_block(input_img, n_filters * 1, kernel_size=3, batchnorm=batchnorm)
-    p1 = MaxPooling2D((2, 2))(c1)
-    p1 = Dropout(dropout)(p1)
-    c2 = conv2d_block(p1, n_filters * 2, kernel_size=3, batchnorm=batchnorm)
-    p2 = MaxPooling2D((2, 2))(c2)
-    p2 = Dropout(dropout)(p2)
-    c3 = conv2d_block(p2, n_filters * 4, kernel_size=3, batchnorm=batchnorm)
-    p3 = MaxPooling2D((2, 2))(c3)
-    p3 = Dropout(dropout)(p3)
-    c4 = conv2d_block(p3, n_filters * 8, kernel_size=3, batchnorm=batchnorm)
-    p4 = MaxPooling2D((2, 2))(c4)
-    p4 = Dropout(dropout)(p4)
-    c5 = conv2d_block(p4, n_filters=n_filters * 16, kernel_size=3, batchnorm=batchnorm)
-    u6 = UpSampling2D((2, 2))(c5)
-    u6 = concatenate([u6, c4])
-    u6 = Dropout(dropout)(u6)
-    c6 = conv2d_block(u6, n_filters * 8, kernel_size=3, batchnorm=batchnorm)
-    u7 = UpSampling2D((2, 2))(c6)
-    u7 = concatenate([u7, c3])
-    u7 = Dropout(dropout)(u7)
-    c7 = conv2d_block(u7, n_filters * 4, kernel_size=3, batchnorm=batchnorm)
-    u8 = UpSampling2D((2, 2))(c7)
-    u8 = concatenate([u8, c2])
-    u8 = Dropout(dropout)(u8)
-    c8 = conv2d_block(u8, n_filters * 2, kernel_size=3, batchnorm=batchnorm)
-    u9 = UpSampling2D((2, 2))(c8)
-    u9 = concatenate([u9, c1])
-    u9 = Dropout(dropout)(u9)
-    c9 = conv2d_block(u9, n_filters * 1, kernel_size=3, batchnorm=batchnorm)
-    outputs = Conv2D(1, (1, 1), activation='sigmoid')(c9)
-    return Model(inputs=[input_img], outputs=[outputs])
+model_path = os.path.join("backend", "ml_models", "custom_building_best.h5")
 
 # Global memory model for fast inference
 _building_model = None
@@ -78,15 +35,38 @@ def get_building_model():
     global _building_model
     if not TF_AVAILABLE:
         raise RuntimeError("TensorFlow is not installed.")
+        
     if _building_model is None:
-        logger.info(f"Loading Building U-Net from {model_path}")
-        input_img = Input((256, 256, 3), name='img')
-        _building_model = get_unet(input_img, n_filters=16, dropout=0.05, batchnorm=True)
-        if os.path.exists(model_path):
-            try:
-                _building_model.load_weights(model_path)
-            except Exception as e:
-                logger.error(f"Error loading {model_path}: {e}. Retrying with fresh model.")
+        candidates = [
+            os.environ.get("BUILDING_MODEL_PATH", ""),
+            os.path.join("backend", "ml_models", "custom_building_best.h5"),
+            os.path.join('models', 'building', 'best_model.h5'),
+            os.path.join(os.path.dirname(__file__), '..', '..', '..', 'backend', 'ml_models', 'model_output.h5')
+        ]
+        
+        resolved = None
+        for p in candidates:
+            if not p: continue
+            ap = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', p)) if not os.path.isabs(p) else os.path.abspath(p)
+            if os.path.exists(ap):
+                resolved = ap
+                break
+                
+        if resolved is None:
+            searched = "\n".join([f"- {c}" for c in candidates if c])
+            raise FileNotFoundError(
+                "Building DL model file not found.\n"
+                "Please place 'model_output.h5' in your tutor reference folder or 'custom_building_best.h5' in the root directory.\n"
+                f"Searched locations:\n{searched}"
+            )
+            
+        logger.info(f"Loading Building U-Net from {resolved}")
+        try:
+            _building_model = load_model(resolved, compile=False)
+        except Exception as e:
+            logger.error(f"Error natively loading {resolved}: {e}")
+            raise
+            
     return _building_model
 
 def get_rgb_composite(region, include_labels=False):
@@ -209,8 +189,21 @@ def train_building_active_learning(geojson_geom, class_label: int):
     if not hasattr(model, 'optimizer') or model.optimizer is None:
         model.compile(optimizer=Adam(learning_rate=1e-4), loss='binary_crossentropy', metrics=['accuracy'])
         
+    # Append to dataset buffer to avoid catastrophic forgetting
+    # We should ideally load previous data, but here we just append this patch to disk
+    import threading
+    import time
+    stamp = int(time.time() * 1000)
+    data_dir = os.path.join("data", "training_data", "building_training_data", "processed")
+    os.makedirs(data_dir, exist_ok=True)
+    np.save(os.path.join(data_dir, f"active_{stamp}_X.npy"), arr[:, :, :3])
+    np.save(os.path.join(data_dir, f"active_{stamp}_y.npy"), y_train[0, :, :, 0])
+    
+    # Still train slightly on current pattern
     model.fit(X_train, y_train, epochs=2, batch_size=1, verbose=1)
-    model.save_weights(model_path)
+    
+    # Save full model to maintain compatibility
+    model.save(model_path)
     return True
 
 def train_building_distill(geojson_geom):
@@ -230,8 +223,17 @@ def train_building_distill(geojson_geom):
     if not hasattr(model, 'optimizer') or model.optimizer is None:
         model.compile(optimizer=Adam(learning_rate=1e-4), loss='binary_crossentropy', metrics=['accuracy'])
         
+    import time
+    stamp = int(time.time() * 1000)
+    data_dir = os.path.join("data", "training_data", "building_training_data", "processed")
+    os.makedirs(data_dir, exist_ok=True)
+    np.save(os.path.join(data_dir, f"distill_{stamp}_X.npy"), arr[:, :, :3])
+    np.save(os.path.join(data_dir, f"distill_{stamp}_y.npy"), y_mask)
+
     model.fit(X_train, y_train, epochs=3, batch_size=1, verbose=1)
-    model.save_weights(model_path)
+    
+    # Save full model to maintain compatibility with training script
+    model.save(model_path)
     return True
 
 # ── Predefined urban locations for Auto-Collect (lat, lon, name) ──
@@ -248,7 +250,7 @@ BUILDING_COLLECT_LOCATIONS = [
     {"name": "Nagpur, India",      "lat": 21.146,  "lon": 79.088,  "size": 0.02},
 ]
 
-BUILDING_DATA_DIR = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'building_training_data')
+BUILDING_DATA_DIR = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'data', 'training_data', 'building_training_data')
 
 def _update_collection_log(data_dir, entry):
     """Update or create collection_log.json with new entry."""
