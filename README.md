@@ -1,46 +1,114 @@
-# Earth Watch — Illegal Mine Detection System
+# 🌍 Earth Watch — AI-Powered Geospatial Analysis Platform
 
-AI-powered geospatial system for detecting illegal mines using Sentinel-2 satellite imagery, a ResNet34+UNet dual-head model, and PostGIS legal classification.
+Earth Watch is a full-stack geospatial intelligence platform that uses satellite imagery, deep learning, and cloud-native GIS to detect **illegal mines**, analyze **land use**, monitor **deforestation**, map **landslide risk**, detect **buildings**, track **forest fires**, and measure **snow cover** — all from a single interactive dashboard.
 
 ---
 
-## Project Structure
+## ✨ Features
+
+| Analysis | Method | Data Source |
+|----------|--------|-------------|
+| 🪨 **Illegal Mine Detection** | ResNet34 + UNet (PyTorch) | Sentinel-2 (10 m) via GEE |
+| 🏘️ **Building Detection** | Custom U-Net (TensorFlow) | Sentinel-2 + Google Open Buildings |
+| 🌱 **Land Use / Land Cover** | 1D-CNN (TensorFlow) | Google Dynamic World (10 m) |
+| ⛰️ **Landslide Susceptibility** | Random Forest + Deep Learning | NASA NASADEM (90 m) |
+| 🔥 **Forest Fire Burn Severity** | dNBR Index | Sentinel-2 via GEE |
+| ❄️ **Snow Cover Mapping** | NDSI Index | Sentinel-2 via GEE |
+| 🌲 **Deforestation Detection** | Forest cover change analysis | Sentinel-2 via GEE |
+| ✅ **Officer Verification** | PostGIS + Supabase | User-verified mine table |
+
+---
+
+## 🏗️ Architecture
 
 ```
-Earth_watch/
+Earth-Watch/
 ├── api.py                          ← FastAPI entry point
-├── requirements.txt
-├── .env                            ← Your secrets (gitignored)
-├── .env.example                    ← Template to copy
+├── requirements.txt                ← Python dependencies
+├── .env.example                    ← Environment variable template
 │
 ├── backend/
-│   ├── config.py                   ← All settings (reads .env)
-│   ├── controllers/                ← MVC API Controllers (detect, verify, lulc, building, etc.)
-│   ├── ml_models/                  ← Machine learning weights (*.h5, *.npy, *.pt)
+│   ├── config.py                   ← Centralized settings (reads .env)
+│   ├── controllers/                ← REST API route handlers
+│   │   ├── detect.py               ← Mine detection endpoint
+│   │   ├── verify.py               ← Officer verification endpoints
+│   │   ├── lulc.py                 ← Land Use/Cover endpoint
+│   │   ├── building.py             ← Building detection endpoint
+│   │   ├── landslide.py            ← Landslide susceptibility endpoint
+│   │   ├── fire.py                 ← Forest fire endpoint
+│   │   ├── snow.py                 ← Snow cover endpoint
+│   │   └── deforestation.py        ← Deforestation endpoint
+│   ├── ml_models/                  ← Trained model weights (*.pt, *.h5)
 │   ├── services/
-│   │   └── analysis/               ← Core AI inference and GEE logic
-│   └── utils/                      ← Database and formatting utilities
+│   │   └── analysis/               ← Core AI inference and GEE pipelines
+│   └── utils/                      ← Database helpers, thumbnail generation
 │
-├── data/                           ← Global Geopackages and sample CSV/GeoJSONs
-│   └── training_data/              ← Offline GEE tile buffers for ML training
+├── data/                           ← Global GeoPackages and sample data
+│   └── training_data/              ← GEE tile buffers for ML training
 │
-├── frontend/                       ← Next.js dynamic dashboard
+├── frontend/                       ← Next.js interactive dashboard
 │
-├── ml_training/                    ← Standalone AI training scripts
+├── ml_training/                    ← Standalone model training scripts
 │
-└── scripts/                        ← Developer testing scripts & scratchpads
+└── scripts/                        ← Developer testing notebooks
 ```
 
 ---
 
-## Setup
+## 🤖 ML Models
 
-### 1. Clone and enter directory
+| Model | Framework | Architecture | Input | Purpose |
+|-------|-----------|-------------|-------|---------|
+| `best_model.pt` | PyTorch | ResNet34 + UNet | 11-band Sentinel-2, 512×512 px | Mine detection segmentation |
+| `custom_building_best.h5` | TensorFlow/Keras | U-Net | Sentinel-2 patches | Building footprint segmentation |
+| `custom_landslide_best.h5` | TensorFlow/Keras | U-Net | DEM terrain variables | Landslide susceptibility mapping |
+| `lulc_custom_model.h5` | TensorFlow/Keras | 1D-CNN | 10 spectral channels | Land use classification (9 classes) |
+
+### Mine Detection Pipeline
+
+1. **Tiling** — AOI is split into 5×5 km overlapping tiles (50% overlap)
+2. **GEE Retrieval** — Sentinel-2 composites downloaded and cloud-masked (6-month window)
+3. **Inference** — PyTorch ResNet34+UNet produces pixel-level mine probability masks
+4. **Merging** — Overlapping detections merged using IoU threshold (0.15)
+5. **Legal Classification** — PostGIS cross-reference against Maus et al. 2022 global mining polygons:
+   - 🔴 **ILLEGAL** — No overlap with known legal polygon (IoU ≤ 0.10)
+   - 🟡 **SUSPECT** — Partial overlap (0.10 < IoU ≤ 0.30)
+   - 🟢 **LEGAL** — Significant overlap (IoU > 0.30)
+6. **Thumbnails** — 400×400 base64-encoded preview images with confidence overlays
+
+---
+
+## 🖥️ Tech Stack
+
+### Backend
+- **FastAPI** + **Uvicorn** — REST API server
+- **PyTorch 2.0+** — Primary mine detection model (CUDA / MPS / CPU)
+- **TensorFlow 2.10+** — Building, landslide, and LULC models
+- **Google Earth Engine API** — Satellite data retrieval and processing
+- **Rasterio / GeoPandas / Shapely** — Geospatial data processing
+- **Supabase PostgreSQL + PostGIS** — Spatial database for legal mine polygons and officer verification
+- **Diskcache** — Tile-level GEE caching (180-day validity)
+
+### Frontend
+- **Next.js 16** (React 19) — Interactive dashboard
+- **MapLibre GL** — Vector map rendering
+- **Mapbox GL Draw** — Draw polygons and rectangles on the map
+- **Three.js + React Globe GL** — 3D Earth globe visualization
+- **Tailwind CSS 4** — UI styling
+- **Framer Motion** — Page and component animations
+- **Axios** — Backend API communication
+
+---
+
+## 🚀 Setup
+
+### 1. Clone and enter the directory
 ```bash
-cd Earth_watch
+git clone https://github.com/Harsh-Atkare/Earth-Watch.git
+cd Earth-Watch
 ```
 
-### 2. Create virtual environment (recommended)
+### 2. Create a Python virtual environment
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # macOS/Linux
@@ -53,16 +121,15 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configure environment variables
-
 ```bash
 cp .env.example .env
 ```
 
-Now open `.env` and fill in the following keys:
+Open `.env` and fill in the following keys:
 
 | Variable | Description |
 |----------|-------------|
-| `PGDATABASE` | Your Supabase database name |
+| `PGDATABASE` | Supabase database name |
 | `PGUSER` | Supabase pooler username |
 | `PGPASSWORD` | Supabase database password |
 | `PGHOST` | Supabase pooler host |
@@ -71,32 +138,35 @@ Now open `.env` and fill in the following keys:
 | `DB_DIRECT_PASSWORD` | Supabase direct connection password |
 | `DB_DIRECT_HOST` | Supabase direct connection host |
 | `DB_DIRECT_PORT` | Supabase direct connection port (default: `5432`) |
-| `GEE_PROJECT` | Your Google Earth Engine project ID (see below) |
-| `MODEL_PATH` | Path to your `.pt` model weights file |
+| `GEE_PROJECT` | Google Earth Engine project ID (see below) |
+| `MODEL_PATH` | Path to the `.pt` model weights file |
+| `NEXT_PUBLIC_API_URL` | Backend URL for the frontend (default: `http://localhost:8000`) |
+| `API_HOST` | Uvicorn bind host (default: `0.0.0.0`) |
+| `API_PORT` | Uvicorn bind port (default: `8000`) |
 
 ---
 
 ### 5. Get a Google Earth Engine Project ID (Non-Commercial Access)
 
-Google Earth Engine is free for non-commercial and research use. Follow these steps to register and get your project ID:
+Google Earth Engine is free for non-commercial and research use.
 
 **Step 1 — Sign up for GEE access**
 1. Go to [https://earthengine.google.com](https://earthengine.google.com) and click **Sign Up**.
 2. Sign in with a Google account.
 3. Fill in the registration form. Under **Use Case**, select **Research / Non-Commercial**.
-4. Submit and wait for approval — this usually takes a few minutes to a few hours.
+4. Submit and wait for approval (usually a few minutes to a few hours).
 
-**Step 2 — Create a Cloud Project for GEE**
+**Step 2 — Create a Cloud Project**
 1. Go to the [Google Cloud Console](https://console.cloud.google.com).
 2. Click **Select a project** → **New Project**.
-3. Give your project a name (e.g., `earth-watch-gee`) and click **Create**.
-4. Once created, note the **Project ID** shown under the project name (e.g., `earth-watch-gee-123456`). This is your `GEE_PROJECT` value.
-5. In the Cloud Console, go to **APIs & Services → Library**, search for **Earth Engine API**, and click **Enable**.
+3. Name the project (e.g., `earth-watch-gee`) and click **Create**.
+4. Note the **Project ID** shown under the project name — this is your `GEE_PROJECT` value.
+5. Go to **APIs & Services → Library**, search for **Earth Engine API**, and click **Enable**.
 
 **Step 3 — Register your project with Earth Engine**
 1. Go to [https://code.earthengine.google.com](https://code.earthengine.google.com).
-2. In the top-right, click your avatar → **Register a new cloud project**.
-3. Select the Cloud project you just created and register it for **Non-Commercial / Research** use.
+2. Click your avatar → **Register a new cloud project**.
+3. Select the Cloud project you created and register it for **Non-Commercial / Research** use.
 
 **Step 4 — Add your Project ID to `.env`**
 ```
@@ -113,9 +183,9 @@ Run this once to authorize your machine:
 earthengine authenticate
 ```
 
-This will open a browser window asking you to log in with the Google account linked to your GEE project. After approving, a credentials token is saved locally and used automatically by the app.
+This opens a browser window to log in with the Google account linked to your GEE project. The credentials token is saved locally and reused automatically.
 
-> **Note:** If you're running on a remote server (no browser), use:
+> **Remote server (no browser)?** Use:
 > ```bash
 > earthengine authenticate --quiet
 > ```
@@ -125,60 +195,63 @@ This will open a browser window asking you to log in with the Google account lin
 
 ### 7. Set up the legal mines database
 
-Run this once to load the Maus et al. 2022 global mining polygons into your Supabase PostGIS table:
+Load the Maus et al. 2022 global mining polygons into your Supabase PostGIS table (run once):
 
 ```bash
-python setup_legal_mines.py
+python ml_training/setup_legal_mines.py
 ```
 
-This will create the `legal_mines` table, insert all mining polygons, and build a spatial index for fast detection queries.
+This creates the `legal_mines` table, inserts all global mining polygons, and builds a spatial index for fast intersection queries.
 
-### 8. Place your trained models
+### 8. Place trained model weights
+
 ```
 backend/ml_models/best_model.pt
 backend/ml_models/custom_building_best.h5
-...
+backend/ml_models/custom_landslide_best.h5
+backend/ml_models/lulc_custom_model.h5
 ```
 
 ---
 
-## Running the Backend
+## ▶️ Running the App
 
+### Backend
 ```bash
 uvicorn api:app --reload --host 0.0.0.0 --port 8000
 ```
 
-API will be available at `http://localhost:8000`  
-Swagger docs: `http://localhost:8000/docs`
+- API: `http://localhost:8000`
+- Swagger UI: `http://localhost:8000/docs`
 
----
-
-## Running the Frontend
-
+### Frontend
 ```bash
 cd frontend
 npm install          # First time only
 npm run dev
 ```
 
-Frontend runs at `http://localhost:3000`
+- Dashboard: `http://localhost:3000`
 
 ---
 
-## API Endpoints
+## 📡 API Endpoints
 
-| Method | Endpoint         | Description                              |
-|--------|-----------------|------------------------------------------|
-| GET    | `/`             | Health check                             |
-| GET    | `/ping`         | Ping                                     |
-| POST   | `/api/detect`   | Run mine detection on a GeoJSON polygon  |
-| GET    | `/api/verified` | List all officer-verified mines          |
-| POST   | `/api/verify`   | Mark a mine as verified (USER_LEGAL)     |
-| POST   | `/api/lulc`     | Land Use Land Cover analysis             |
-| POST   | `/api/building` | Built-up area analysis                   |
-| POST   | `/api/landslide`| Landslide susceptibility analysis        |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Health check |
+| GET | `/ping` | Ping |
+| POST | `/api/detect` | Run mine detection on a GeoJSON polygon |
+| GET | `/api/verified` | List all officer-verified mines |
+| POST | `/api/verify` | Mark a mine as verified (USER_LEGAL) |
+| POST | `/api/lulc` | Land Use / Land Cover classification |
+| POST | `/api/building` | Building / built-up area detection |
+| POST | `/api/landslide` | Landslide susceptibility analysis |
+| POST | `/api/fire` | Forest fire burn severity (dNBR) |
+| POST | `/api/snow` | Snow cover mapping (NDSI) |
+| POST | `/api/deforestation` | Deforestation / forest cover change |
 
-### POST /api/detect — Request body
+### Example: POST `/api/detect`
 ```json
 {
   "geojson": {
@@ -192,34 +265,84 @@ Frontend runs at `http://localhost:3000`
 }
 ```
 
----
-
-## Errors Fixed
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `data-fill layer does not exist` | `queryRenderedFeatures` called before layer is added to map | Wrapped in `if (geoData && !loading)` guard |
-| `Axios 500 on /api/detect` | Hardcoded DB credentials, monolithic api.py | Moved all config to `.env` + `backend/config.py` |
-| `THREE.Clock deprecated` | Old Three.js API in EarthGlobe.tsx | Cosmetic warning only — use `THREE.Timer` if you update that component |
-| Hardcoded `window.location.hostname:8000` | Not portable across environments | Replaced with `NEXT_PUBLIC_API_URL` env var |
+**Response** includes GeoJSON features with:
+- `verdict`: `ILLEGAL` | `SUSPECT` | `LEGAL` | `USER_LEGAL`
+- `confidence`: model confidence score (0–1)
+- `area_km2`: detected mine area in km²
+- `thumbnail`: base64-encoded 400×400 PNG preview
 
 ---
 
-## Environment Variables Reference
+## 🗄️ Database Schema
 
-| Variable | Used by | Description |
-|----------|---------|-------------|
-| `PGDATABASE` | FastAPI | Supabase DB name |
-| `PGUSER` | FastAPI | Supabase pooler user |
-| `PGPASSWORD` | FastAPI | Supabase password |
-| `PGHOST` | FastAPI | Supabase pooler host |
-| `PGPORT` | FastAPI | Supabase pooler port (6543) |
-| `DB_DIRECT_USER` | mine_detection | Direct DB user |
-| `DB_DIRECT_PASSWORD` | mine_detection | Direct DB password |
-| `DB_DIRECT_HOST` | mine_detection | Direct DB host |
-| `DB_DIRECT_PORT` | mine_detection | Direct DB port (5432) |
-| `GEE_PROJECT` | mine_detection | GEE project ID |
-| `MODEL_PATH` | mine_detection | Path to .pt weights file |
-| `API_HOST` | uvicorn | Bind host (default 0.0.0.0) |
-| `API_PORT` | uvicorn | Bind port (default 8000) |
-| `NEXT_PUBLIC_API_URL` | Next.js | Backend URL for frontend |
+| Table | Description |
+|-------|-------------|
+| `legal_mines` | Global mining polygons from Maus et al. 2022 (PostGIS geometry + spatial index) |
+| `user_verified_mines` | Officer-verified mines with `mine_id`, `geom`, `area_km2`, `reason`, `notes`, `created_at` |
+
+---
+
+## 🧠 Training Your Own Models
+
+Training scripts are in `ml_training/`:
+
+| Script | Purpose |
+|--------|---------|
+| `train_custom_building.py` | Train U-Net for building detection on GEE-extracted data |
+| `train_custom_landslide.py` | Train U-Net for landslide susceptibility |
+| `lulc_trainer.py` | Train 1D-CNN for LULC classification (10 spectral bands → 9 classes) |
+| `setup_legal_mines.py` | Load Maus et al. 2022 mining polygons into Supabase |
+| `showcase_lulc.py` | Visualize LULC predictions as a color map |
+| `test_landslide.py` | Test the landslide model on a sample AOI |
+
+Training data lives in `data/training_data/`:
+- `building_training_data/processed/` — Sentinel-2 patches with building labels
+- `landslide_training_data/` — DEM terrain variables with landslide labels
+- `lulc_training_data/samples/lulc_samples.csv` — Spectral samples with class labels
+
+---
+
+## ⚙️ Configuration Reference
+
+Key settings in `backend/config.py`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `TILE_KM` | `5.0` | Tile size in kilometers |
+| `OVERLAP_FRAC` | `0.5` | Tile overlap fraction (50%) |
+| `TARGET_SIZE` | `512` | Model input size (pixels) |
+| `SCALE` | `10` | Sentinel-2 pixel resolution (metres) |
+| `CLOUD_THRESH` | `20` | Max cloud coverage % |
+| `COMP_MONTHS` | `6` | Composite window (months) |
+| `SEG_THRESHOLD` | `0.50` | Segmentation confidence threshold |
+| `MINE_THRESHOLD` | `0.50` | Mine detection confidence threshold |
+| `IOU_MERGE_THRESH` | `0.15` | IoU threshold for merging overlapping detections |
+| `IOU_LEGAL_THRESH` | `0.30` | Minimum IoU overlap for LEGAL verdict |
+| `IOU_SUSPECT_THRESH` | `0.10` | Minimum IoU overlap for SUSPECT verdict |
+| `CACHE_VALID_DAYS` | `180` | GEE tile cache validity (days) |
+| `N_CHANNELS` | `11` | Number of Sentinel-2 input channels |
+| `S2_BANDS` | B2–B12 | Sentinel-2 band selection |
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Commit your changes: `git commit -m "Add your feature"`
+4. Push to the branch: `git push origin feature/your-feature`
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is open-source. See [LICENSE](LICENSE) for details.
+
+---
+
+## 📚 References
+
+- Maus, V., et al. (2022). *Global-scale mining polygons (Version 2)*. PANGAEA. [https://doi.org/10.1594/PANGAEA.942325](https://doi.org/10.1594/PANGAEA.942325)
+- Google Earth Engine: [https://earthengine.google.com](https://earthengine.google.com)
+- Sentinel-2 (ESA Copernicus): [https://sentinel.esa.int](https://sentinel.esa.int)
